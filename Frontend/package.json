@@ -1,0 +1,31 @@
+{
+  "name": "tam-frontend",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.14.0",
+    "daisyui": "^5.5.19",
+    "dompurify": "^3.3.3",
+    "lucide-react": "^1.7.0",
+    "react-hook-form": "^7.72.1",
+    "react-router-dom": "^7.14.0",
+    "resolvers": "^1.0.0",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.27",
+    "eslint-plugin-security": "^4.0.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "3.4"
+  }
+}
