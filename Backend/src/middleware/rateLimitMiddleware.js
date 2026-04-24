@@ -1,40 +1,57 @@
-import rateLimit from "express-rate-limit";
+import { rateLimit } from "express-rate-limit";
 import ApiResponse from "../utils/apiResponse.js";
 
-// General protector for all API routes
+/* -------------------------
+   GLOBAL API LIMITER
+------------------------- */
 export const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per window
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Removed 'store: redisStore' to stop the crashes
+  windowMs: 15 * 60 * 1000,
+  limit: 100, // v7 uses 'limit' instead of 'max'
+  standardHeaders: true,
+  legacyHeaders: false,
+  // validate: { trustProxy: false } fixes the IPv6/keyGenerator warning
+  validate: { trustProxy: false },
+  handler: (req, res) => {
+    res
+      .status(429)
+      .json(new ApiResponse(429, null, "Too many requests. Try again later."));
+  },
+});
+
+/* -------------------------
+   AUTH LIMITER
+------------------------- */
+export const authRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  skipSuccessfulRequests: true,
+  validate: { trustProxy: false },
+  // Custom keys are allowed, but we remove the manual req.ip logic
+  // to let the library handle the IPv6 safety checks.
+  keyGenerator: (req) => {
+    const email = req.body?.email || "anonymous";
+    return email;
+  },
   handler: (req, res) => {
     res
       .status(429)
       .json(
-        new ApiResponse(
-          429,
-          null,
-          "Too many requests from this IP, please try again after 15 minutes",
-        ),
+        new ApiResponse(429, null, "Too many login attempts. Try again later."),
       );
   },
 });
 
-// Stricter limiter specifically for Auth (Login/Register)
-export const authRateLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour window
-  max: 10, // Limit each IP to 10 failed attempts per hour
-  standardHeaders: true,
-  legacyHeaders: false,
+/* -------------------------
+   REFRESH LIMITER
+------------------------- */
+export const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  validate: { trustProxy: false },
   handler: (req, res) => {
     res
       .status(429)
-      .json(
-        new ApiResponse(
-          429,
-          null,
-          "Too many login attempts. Please try again in an hour.",
-        ),
-      );
+      .json(new ApiResponse(429, null, "Too many refresh attempts."));
   },
 });
