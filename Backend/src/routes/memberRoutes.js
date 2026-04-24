@@ -6,10 +6,12 @@ import {
   getDirectory,
   submitForVerification,
 } from "../controllers/memberController.js";
+import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
 
 // Middlewares
 import { protect } from "../middleware/authMiddleware.js";
 import { authRateLimiter } from "../middleware/rateLimitMiddleware.js";
+import { validate } from "../middleware/validateMiddleware.js";
 
 const router = express.Router();
 
@@ -32,14 +34,14 @@ router.get("/me", protect, getMyProfile);
  * @desc    Initial profile setup
  * @access  Private
  */
-router.post("/profile", protect, upsertProfile);
+router.post("/profile", protect, validate(profileSchema), upsertProfile);
 
 /**
  * @route   PATCH /api/v1/members/profile
  * @desc    Update specific profile fields
  * @access  Private
  */
-router.patch("/profile", protect, updateProfile);
+router.patch("/profile", protect, validate(updateProfileSchema), updateProfile);
 
 /**
  * @route   POST /api/v1/members/submit
