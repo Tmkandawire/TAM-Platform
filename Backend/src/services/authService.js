@@ -7,23 +7,31 @@ import User from "../models/User.js";
 import Session from "../models/Session.js";
 import ApiError from "../utils/ApiError.js";
 
+const MAX_SESSIONS = 5;
+
+// Pre-generated hash to prevent timing attacks
+const DUMMY_HASH = "$2a$12$C6UzMDM.H6dfI/f/IKcEeOZ7Z9j/3GQ8Z8Z8Z8Z8Z8Z8Z8Z8Z8Z";
+
 class AuthService {
-  // 🔐 Generate unique session ID
+  /* -------------------------
+     HELPERS
+  ------------------------- */
+
   generateJti() {
     return crypto.randomUUID();
   }
 
-  // ⏱ Convert expiry string safely
   getExpiryDate(expiry) {
     return new Date(Date.now() + ms(expiry || "7d"));
   }
 
-  // 🔐 Access Token
-  generateAccessToken(user) {
+  generateAccessToken(user, jti) {
     return jwt.sign(
       {
         id: user._id,
         role: user.role,
+        jti,
+        tokenVersion: user.tokenVersion || 0,
         type: "access",
       },
       process.env.JWT_ACCESS_SECRET,
@@ -33,12 +41,12 @@ class AuthService {
     );
   }
 
-  // 🔐 Refresh Token
   generateRefreshToken(user, jti) {
     return jwt.sign(
       {
         id: user._id,
         jti,
+        tokenVersion: user.tokenVersion || 0,
         type: "refresh",
       },
       process.env.JWT_REFRESH_SECRET,
@@ -48,11 +56,26 @@ class AuthService {
     );
   }
 
-  // 🧾 Register
+  async enforceSessionLimit(userId) {
+    const count = await Session.countDocuments({ user: userId });
+
+    if (count >= MAX_SESSIONS) {
+      await Session.findOneAndDelete({ user: userId }).sort({ createdAt: 1 });
+    }
+  }
+
+  /* -------------------------
+     REGISTER
+  ------------------------- */
+
   async register(userData) {
     const { email, password, role } = userData;
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({
+      email,
+      isDeleted: false,
+    });
+
     if (existingUser) {
       throw new ApiError(400, "User already exists", [], "USER_EXISTS");
     }
@@ -66,46 +89,56 @@ class AuthService {
     return user;
   }
 
-  // 🔐 Login
-  async login(email, password, meta) {
-    const user = await User.findOne({ email }).select("+password");
+  /* -------------------------
+     LOGIN
+  ------------------------- */
 
-    if (!user) {
+  async login(email, password, meta) {
+    const user = await User.findOne({
+      email,
+      isDeleted: false,
+    }).select("+password");
+
+    // 🔐 Prevent timing attacks
+    const isMatch = user
+      ? await user.matchPassword(password)
+      : await bcrypt.compare(password, DUMMY_HASH);
+
+    if (!user || !isMatch) {
+      if (user) {
+        user.loginAttempts += 1;
+
+        if (user.loginAttempts >= 5) {
+          user.lockUntil = new Date(Date.now() + 15 * 60 * 1000);
+        }
+
+        await user.save();
+      }
+
       throw new ApiError(401, "Invalid credentials", [], "INVALID_CREDENTIALS");
     }
 
-    // 🔒 Account lock check
+    // 🔒 Lock check
     if (user.isLocked()) {
       throw new ApiError(423, "Account locked", [], "ACCOUNT_LOCKED");
     }
 
-    const isMatch = await user.matchPassword(password);
-
-    if (!isMatch) {
-      user.loginAttempts += 1;
-
-      // Lock account after 5 failed attempts
-      if (user.loginAttempts >= 5) {
-        user.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
-      }
-
-      await user.save();
-
-      throw new ApiError(401, "Invalid credentials", [], "INVALID_CREDENTIALS");
-    }
-
-    // Reset login attempts on success
+    // Reset attempts
     user.loginAttempts = 0;
     user.lockUntil = null;
+    user.lastLoginAt = new Date();
     await user.save();
 
-    if (user.status !== "active") {
+    if (!user.isActive()) {
       throw new ApiError(403, "Account not active", [], "ACCOUNT_INACTIVE");
     }
 
+    // Session control
+    await this.enforceSessionLimit(user._id);
+
     const jti = this.generateJti();
 
-    const accessToken = this.generateAccessToken(user);
+    const accessToken = this.generateAccessToken(user, jti);
     const refreshToken = this.generateRefreshToken(user, jti);
 
     const refreshTokenHash = await bcrypt.hash(refreshToken, 12);
@@ -122,8 +155,11 @@ class AuthService {
     return { user, accessToken, refreshToken };
   }
 
-  // 🔄 Refresh Token (Rotation + Reuse Detection)
-  async refresh(oldToken) {
+  /* -------------------------
+     REFRESH (ROTATION + REUSE DETECTION)
+  ------------------------- */
+
+  async refresh(oldToken, meta) {
     let decoded;
 
     try {
@@ -136,7 +172,8 @@ class AuthService {
       throw new ApiError(401, "Invalid token type", [], "INVALID_TOKEN_TYPE");
     }
 
-    const session = await Session.findOne({ jti: decoded.jti });
+    // 🔥 Atomic delete to prevent race condition
+    const session = await Session.findOneAndDelete({ jti: decoded.jti });
 
     if (!session || session.isRevoked) {
       throw new ApiError(401, "Session invalid", [], "SESSION_INVALID");
@@ -144,7 +181,7 @@ class AuthService {
 
     const isMatch = await bcrypt.compare(oldToken, session.refreshTokenHash);
 
-    // 🚨 Token reuse detection
+    // 🚨 Reuse detection
     if (!isMatch) {
       await Session.updateMany({ user: decoded.id }, { isRevoked: true });
 
@@ -153,8 +190,7 @@ class AuthService {
 
     const user = await User.findById(decoded.id);
 
-    if (!user || user.status !== "active") {
-      await Session.deleteOne({ jti: decoded.jti });
+    if (!user || user.isDeleted || !user.isActive()) {
       throw new ApiError(
         403,
         "User inactive or deleted",
@@ -163,16 +199,14 @@ class AuthService {
       );
     }
 
-    // Update activity
-    session.lastUsedAt = new Date();
-    await session.save();
-
-    // 🔄 Rotate session
-    await session.deleteOne();
+    // Optional: device/IP validation
+    if (meta?.ip && session.ipAddress && meta.ip !== session.ipAddress) {
+      throw new ApiError(401, "Suspicious session", [], "SESSION_MISMATCH");
+    }
 
     const newJti = this.generateJti();
 
-    const accessToken = this.generateAccessToken(user);
+    const accessToken = this.generateAccessToken(user, newJti);
     const refreshToken = this.generateRefreshToken(user, newJti);
 
     const refreshTokenHash = await bcrypt.hash(refreshToken, 12);
@@ -189,20 +223,35 @@ class AuthService {
     return { accessToken, refreshToken };
   }
 
-  // 🚪 Logout (single session)
+  /* -------------------------
+     LOGOUT (SINGLE SESSION)
+  ------------------------- */
+
   async logout(refreshToken) {
     try {
       const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
 
-      await Session.findOneAndDelete({ jti: decoded.jti });
-    } catch (err) {
-      console.warn("Logout failed:", err.message);
+      await Session.findOneAndUpdate(
+        { jti: decoded.jti },
+        { isRevoked: true },
+        { returnDocument: "after" },
+      );
+    } catch {
+      // silent
     }
   }
 
-  // 🚪 Logout all sessions
+  /* -------------------------
+     LOGOUT ALL DEVICES
+  ------------------------- */
+
   async logoutAll(userId) {
     await Session.updateMany({ user: userId }, { isRevoked: true });
+
+    // 🔥 Invalidate all tokens instantly
+    await User.findByIdAndUpdate(userId, {
+      $inc: { tokenVersion: 1 },
+    });
   }
 }
 
