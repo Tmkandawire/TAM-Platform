@@ -1,27 +1,32 @@
 import ApiError from "../utils/ApiError.js";
+import logger from "../utils/logger.js";
 
 const errorMiddleware = (err, req, res, next) => {
   let error = err;
 
-  // Convert unknown errors → ApiError
+  /* -------------------------
+     NORMALIZE ERROR
+  ------------------------- */
   if (!(error instanceof ApiError)) {
     error = new ApiError(
-      500,
+      err.statusCode || 500,
       err.message || "Internal Server Error",
       [],
-      "INTERNAL_ERROR",
+      err.code || "INTERNAL_ERROR",
     );
   }
 
-  // Mongoose: Invalid ObjectId
+  /* -------------------------
+     MONGOOSE ERRORS
+  ------------------------- */
+
   if (err.name === "CastError") {
     error = new ApiError(400, "Invalid resource ID", [], "INVALID_ID");
   }
 
-  // Mongoose: Duplicate key
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    const value = err.keyValue[field];
+    const field = Object.keys(err.keyValue || {})[0];
+    const value = err.keyValue?.[field];
 
     error = new ApiError(
       400,
@@ -31,7 +36,19 @@ const errorMiddleware = (err, req, res, next) => {
     );
   }
 
-  // JWT errors
+  if (err.name === "ValidationError") {
+    const errors = Object.values(err.errors).map((e) => ({
+      field: e.path,
+      message: e.message,
+    }));
+
+    error = new ApiError(400, "Validation failed", errors, "VALIDATION_ERROR");
+  }
+
+  /* -------------------------
+     JWT ERRORS
+  ------------------------- */
+
   if (err.name === "JsonWebTokenError") {
     error = new ApiError(401, "Invalid token", [], "INVALID_TOKEN");
   }
@@ -40,11 +57,49 @@ const errorMiddleware = (err, req, res, next) => {
     error = new ApiError(401, "Token expired", [], "TOKEN_EXPIRED");
   }
 
-  res.status(error.statusCode).json({
-    success: false,
+  /* -------------------------
+     ZOD ERRORS
+  ------------------------- */
+
+  if (err.name === "ZodError") {
+    const errors = err.errors.map((e) => ({
+      field: e.path.join("."),
+      message: e.message,
+    }));
+
+    error = new ApiError(400, "Validation failed", errors, "VALIDATION_ERROR");
+  }
+
+  /* -------------------------
+     LOGGING (PRODUCTION-GRADE)
+  ------------------------- */
+
+  logger.error({
     message: error.message,
+    code: error.code,
+    status: error.statusCode,
+    method: req.method,
+    path: req.originalUrl,
+    ip: req.ip,
+    user: req.user?.id || null,
+    stack: err.stack,
+  });
+
+  /* -------------------------
+     RESPONSE
+  ------------------------- */
+
+  const isProd = process.env.NODE_ENV === "production";
+
+  res.status(error.statusCode || 500).json({
+    success: false,
+    message: isProd
+      ? error.message || "Something went wrong"
+      : err.message || error.message,
+
     code: error.code || "INTERNAL_ERROR",
     errors: error.errors || [],
+
     ...(process.env.NODE_ENV === "development" && {
       stack: err.stack,
     }),
