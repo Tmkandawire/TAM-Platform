@@ -6,7 +6,6 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       required: [true, "Please add an email"],
-      unique: true,
       trim: true,
       lowercase: true,
       match: [
@@ -19,7 +18,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, "Please add a password"],
       minlength: [8, "Password must be at least 8 characters"],
-      select: false, // Ensures password is hidden from queries by default
+      select: false,
     },
 
     role: {
@@ -32,8 +31,20 @@ const userSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["pending", "active", "suspended"],
-      default: "pending", // New members start as pending until TAM approval
+      default: "pending",
       index: true,
+    },
+
+    // ✅ Approval metadata (ADMIN WORKFLOW)
+    approvedAt: {
+      type: Date,
+      default: null,
+    },
+
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User", // admin who approved
+      default: null,
     },
 
     profile: {
@@ -41,7 +52,7 @@ const userSchema = new mongoose.Schema(
       ref: "Profile",
     },
 
-    // 🔐 Security fields for brute-force protection
+    // 🔐 Security
     loginAttempts: {
       type: Number,
       default: 0,
@@ -51,35 +62,66 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    // 📊 Audit
+    lastLoginAt: Date,
+
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true },
 );
 
-// Hash password before saving
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+/* -------------------------
+   INDEXES
+------------------------- */
+
+// Unique email (case-insensitive recommended later via collation)
+userSchema.index({ email: 1 }, { unique: true });
+
+// Compound index for soft-delete queries
+userSchema.index({ email: 1, isDeleted: 1 });
+
+/* -------------------------
+   MIDDLEWARE
+------------------------- */
+
+// ✅ FIXED: No next() usage
+userSchema.pre(/^find/, function () {
+  this.where({ isDeleted: false });
+});
+
+// Hash password
+userSchema.pre("save", async function () {
+  if (!this.isModified("password")) return;
 
   const salt = await bcrypt.genSalt(12);
   this.password = await bcrypt.hash(this.password, salt);
-  next();
 });
 
+/* -------------------------
+   METHODS
+------------------------- */
+
 // Compare password
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+userSchema.methods.matchPassword = function (enteredPassword) {
+  return bcrypt.compare(enteredPassword, this.password);
 };
 
-// Check if account is active (for authService)
+// Account status
 userSchema.methods.isActive = function () {
   return this.status === "active";
 };
 
-// 🔐 Account lock check
+// Lock check
 userSchema.methods.isLocked = function () {
   return !!(this.lockUntil && this.lockUntil > Date.now());
 };
 
-// Hide sensitive data when converting to JSON (Global safety)
+// Hide sensitive data
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
