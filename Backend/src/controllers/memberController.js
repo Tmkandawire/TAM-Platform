@@ -1,7 +1,7 @@
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/apiResponse.js";
 import memberService from "../services/memberService.js";
-import { profileSchema, updateProfileSchema } from "../dtos/memberDto.js";
+import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
 
 /**
  * @desc    Create or Update Member Profile
