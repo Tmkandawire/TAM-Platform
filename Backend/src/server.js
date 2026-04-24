@@ -3,29 +3,42 @@ import dotenv from "dotenv";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import morgan from "morgan";
 import xss from "xss-clean";
 import mongoSanitize from "express-mongo-sanitize";
 
 import connectDB from "./config/db.js";
+import "./config/redis.js";
+
+import logger from "./utils/logger.js";
+import requestLogger from "./middleware/requestLogger.js";
 import rootRouter from "./routes/index.js";
+import memberRoutes from "./routes/memberRoutes.js";
 import errorMiddleware from "./middleware/errorMiddleware.js";
 
 dotenv.config();
 
 const app = express();
 
-// Trust proxy (important for production)
+/* -------------------------
+   TRUST PROXY (CRITICAL)
+------------------------- */
 app.set("trust proxy", 1);
 
-// Connect DB
+/* -------------------------
+   CONNECT DATABASE
+------------------------- */
 connectDB();
 
-// Security middleware
+/* -------------------------
+   SECURITY MIDDLEWARE
+------------------------- */
 app.use(helmet());
 app.use(xss());
 app.use(mongoSanitize());
 
+/* -------------------------
+   CORS
+------------------------- */
 app.use(
   cors({
     origin: process.env.CLIENT_URL,
@@ -33,40 +46,73 @@ app.use(
   }),
 );
 
-// Body parsing with limit
+/* -------------------------
+   BODY PARSING
+------------------------- */
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true }));
 
+/* -------------------------
+   COOKIES
+------------------------- */
 app.use(cookieParser());
 
-// Logging
-if (process.env.NODE_ENV === "development") {
-  app.use(morgan("dev"));
-}
+/* -------------------------
+   REQUEST LOGGING (NEW)
+------------------------- */
+app.use(requestLogger);
 
-// Routes
+/* -------------------------
+   ROUTES
+------------------------- */
 app.use("/api/v1", rootRouter);
+app.use("/api/v1/members", memberRoutes);
 
-// Health check
+/* -------------------------
+   HEALTH CHECK
+------------------------- */
 app.get("/", (req, res) => {
   res.send("TAM API is running...");
 });
 
-// Error handler
+/* -------------------------
+   ERROR HANDLER
+------------------------- */
 app.use(errorMiddleware);
 
-// Server start
+/* -------------------------
+   START SERVER
+------------------------- */
 const PORT = process.env.PORT || 5000;
 
 const server = app.listen(PORT, () => {
-  console.log(
-    `\x1b[35m%s\x1b[0m`,
-    `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`,
+  logger.info(
+    `🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`,
   );
 });
 
-// Handle unhandled rejections
+/* -------------------------
+   UNHANDLED PROMISE REJECTIONS
+------------------------- */
 process.on("unhandledRejection", (err) => {
-  console.error("UNHANDLED REJECTION:", err.message);
+  logger.error({
+    message: "UNHANDLED REJECTION",
+    error: err.message,
+    stack: err.stack,
+  });
+
   server.close(() => process.exit(1));
+});
+
+/* -------------------------
+   UNCAUGHT EXCEPTIONS
+------------------------- */
+process.on("uncaughtException", (err) => {
+  logger.error({
+    message: "UNCAUGHT EXCEPTION",
+    error: err.message,
+    stack: err.stack,
+  });
+
+  process.exit(1);
 });
