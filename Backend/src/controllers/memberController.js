@@ -2,29 +2,48 @@ import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/apiResponse.js";
 import memberService from "../services/memberService.js";
 import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
+import ApiError from "../utils/ApiError.js";
+import { normalizeDocuments } from "../utils/normalizeDocuments.js";
 
 /**
- * @desc    Create or Update Member Profile
+ * @desc    Create Member Profile (JSON Only)
  * @route   POST /api/v1/members/profile
- * @access  Private
  */
 export const upsertProfile = asyncHandler(async (req, res) => {
-  // 1. Validate incoming data against DTO
   const validatedData = profileSchema.parse(req.body);
 
-  // 2. Call service to handle logic
-  const profile = await memberService.createProfile(validatedData, req.user.id);
+  const profile = await memberService.createProfile({
+    userId: req.user.id,
+    data: validatedData,
+  });
 
-  // 3. Return standardized response
   res
     .status(201)
-    .json(new ApiResponse(201, profile, "Profile created successfully"));
+    .json(new ApiResponse(201, profile, "Profile initialized successfully"));
+});
+
+/**
+ * @desc Upload KYC Documents
+ */
+export const uploadDocs = asyncHandler(async (req, res) => {
+  // 1. Let the utility handle the heavy lifting and validation
+  const documents = normalizeDocuments(req.files, req.body);
+
+  // 2. Pass the clean, normalized array to the service
+  const profile = await memberService.handleDocumentUpload({
+    userId: req.user.id,
+    documents,
+  });
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(200, profile, "Documents uploaded and pending review"),
+    );
 });
 
 /**
  * @desc    Get Current User's Profile
- * @route   GET /api/v1/members/me
- * @access  Private
  */
 export const getMyProfile = asyncHandler(async (req, res) => {
   const profile = await memberService.getProfileByUserId(req.user.id);
@@ -35,19 +54,15 @@ export const getMyProfile = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Update Member Profile
- * @route   PATCH /api/v1/members/profile
- * @access  Private
+ * @desc    Update Member Profile (JSON Only)
  */
 export const updateProfile = asyncHandler(async (req, res) => {
-  // 1. Validate partial data
   const validatedData = updateProfileSchema.parse(req.body);
 
-  // 2. Call service for update logic
-  const updatedProfile = await memberService.updateProfile(
-    req.user.id,
-    validatedData,
-  );
+  const updatedProfile = await memberService.updateProfile({
+    userId: req.user.id,
+    data: validatedData,
+  });
 
   res
     .status(200)
@@ -55,14 +70,19 @@ export const updateProfile = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Get Approved Member Directory (Public)
+ * @desc    Public Directory of approved members
  * @route   GET /api/v1/members/directory
  * @access  Public
  */
 export const getDirectory = asyncHandler(async (req, res) => {
-  const { city, search } = req.query;
+  const { city, search, page, limit } = req.query;
 
-  const directory = await memberService.getPublicDirectory({ city, search });
+  const directory = await memberService.getPublicDirectory({
+    city,
+    search,
+    page,
+    limit,
+  });
 
   res
     .status(200)
@@ -70,9 +90,7 @@ export const getDirectory = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Submit Profile for Admin Verification
- * @route   POST /api/v1/members/submit
- * @access  Private
+ * @desc    Submit for Verification
  */
 export const submitForVerification = asyncHandler(async (req, res) => {
   const profile = await memberService.submitForApproval(req.user.id);
