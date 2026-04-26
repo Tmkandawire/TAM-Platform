@@ -14,6 +14,7 @@ import requestLogger from "./middleware/requestLogger.js";
 import rootRouter from "./routes/index.js";
 import memberRoutes from "./routes/memberRoutes.js";
 import documentRoutes from "./routes/documentRoutes.js";
+import adminDocumentRoutes from "./routes/adminDocumentRoutes.js";
 
 import errorMiddleware from "./middleware/errorMiddleware.js";
 
@@ -70,7 +71,7 @@ app.use(requestLogger);
 app.use("/api/v1", rootRouter);
 app.use("/api/v1/members", memberRoutes);
 app.use("/api/v1/documents", documentRoutes);
-
+app.use("/api/v1/admin/documents", adminDocumentRoutes);
 /* -------------------------
    HEALTH CHECK
 ------------------------- */
