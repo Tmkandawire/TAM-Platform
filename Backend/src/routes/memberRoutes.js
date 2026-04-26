@@ -14,7 +14,6 @@ import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { authRateLimiter } from "../middleware/rateLimitMiddleware.js";
 import { validate } from "../middleware/validateMiddleware.js";
-import { uploadDocuments } from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
@@ -37,18 +36,6 @@ router.post("/profile", protect, validate(profileSchema), upsertProfile);
  * @route   PATCH /api/v1/members/profile
  */
 router.patch("/profile", protect, validate(updateProfileSchema), updateProfile);
-
-/**
- * @route   POST /api/v1/members/documents
- * @desc    Upload KYC documents (Cloudinary pipeline)
- */
-router.post(
-  "/documents",
-  protect,
-  authRateLimiter,
-  uploadDocuments,
-  uploadDocs,
-);
 
 /**
  * @route   POST /api/v1/members/submit
