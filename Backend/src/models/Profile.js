@@ -167,6 +167,15 @@ profileSchema.virtual("hasExpiredDocs").get(function () {
   );
 });
 
+// ✅ Check if ALL required documents are officially APPROVED
+profileSchema.virtual("isVerified").get(function () {
+  const approvedTypes = this.documents
+    .filter((doc) => doc.status === "approved")
+    .map((doc) => doc.documentType);
+
+  return REQUIRED_DOCS.every((type) => approvedTypes.includes(type));
+});
+
 /* -------------------------
    INSTANCE METHOD (CRITICAL)
 ------------------------- */
