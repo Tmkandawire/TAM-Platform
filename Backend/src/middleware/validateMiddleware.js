@@ -1,17 +1,29 @@
 import ApiError from "../utils/ApiError.js";
+import logger from "../utils/logger.js";
 
-export const validate =
-  (schema, source = "body") =>
-  (req, res, next) => {
-    const data = req[source];
-
-    const result = schema.safeParse(data);
+/**
+ * Enterprise-grade validation middleware
+ * Supports body, params, query simultaneously
+ */
+export const validate = (schema) => (req, res, next) => {
+  try {
+    const result = schema.safeParse({
+      body: req.body,
+      params: req.params,
+      query: req.query,
+    });
 
     if (!result.success) {
       const formattedErrors = result.error.issues.map((err) => ({
         field: err.path.join("."),
         message: err.message,
       }));
+
+      logger.warn("Validation failed", {
+        path: req.originalUrl,
+        method: req.method,
+        errors: formattedErrors,
+      });
 
       return next(
         new ApiError(
@@ -23,8 +35,18 @@ export const validate =
       );
     }
 
-    // ✅ Replace request data with sanitized version
-    req[source] = result.data;
+    // ✅ Replace request data with sanitized values
+    if (result.data.body) req.body = result.data.body;
+    if (result.data.params) req.params = result.data.params;
+    if (result.data.query) req.query = result.data.query;
 
     next();
-  };
+  } catch (err) {
+    logger.error("Validation middleware error", {
+      error: err.message,
+      path: req.originalUrl,
+    });
+
+    next(err);
+  }
+};
