@@ -1,57 +1,83 @@
-import { rateLimit } from "express-rate-limit";
+import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 import ApiResponse from "../utils/apiResponse.js";
+import logger from "../utils/logger.js";
+
+/* -------------------------
+   COMMON HANDLER
+------------------------- */
+const rateLimitHandler = (message) => (req, res) => {
+  logger.warn("Rate limit exceeded", {
+    ip: ipKeyGenerator(req),
+    path: req.originalUrl,
+    method: req.method,
+  });
+
+  res.status(429).json(new ApiResponse(429, null, message));
+};
 
 /* -------------------------
    GLOBAL API LIMITER
 ------------------------- */
 export const globalLimiter = rateLimit({
-  // Removed 'store: redisStore' to stop the crashes
   windowMs: 15 * 60 * 1000,
-  limit: 100, // v7 uses 'limit' instead of 'max'
+  limit: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  // validate: { trustProxy: false } fixes the IPv6/keyGenerator warning
-  validate: { trustProxy: false },
-  handler: (req, res) => {
-    res
-      .status(429)
-      .json(new ApiResponse(429, null, "Too many requests. Try again later."));
-  },
+  keyGenerator: (req) => ipKeyGenerator(req),
+
+  skip: (req) => req.path === "/health",
+
+  handler: rateLimitHandler("Too many requests. Try again later."),
 });
 
 /* -------------------------
-   AUTH LIMITER
+   AUTH LIMITER (LOGIN/REGISTER)
 ------------------------- */
 export const authRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   limit: 10,
   skipSuccessfulRequests: true,
-  validate: { trustProxy: false },
-  // Custom keys are allowed, but we remove the manual req.ip logic
-  // to let the library handle the IPv6 safety checks.
   keyGenerator: (req) => {
-    const email = req.body?.email || "anonymous";
-    return email;
+    const email = req.body?.email?.toLowerCase();
+    const ip = ipKeyGenerator(req);
+    return email ? `${email}-${ip}` : ip;
   },
-  handler: (req, res) => {
-    res
-      .status(429)
-      .json(
-        new ApiResponse(429, null, "Too many login attempts. Try again later."),
-      );
-  },
+
+  handler: rateLimitHandler(
+    "Too many authentication attempts. Try again later.",
+  ),
 });
 
 /* -------------------------
-   REFRESH LIMITER
+   TOKEN REFRESH LIMITER
 ------------------------- */
 export const refreshLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
-  validate: { trustProxy: false },
-  handler: (req, res) => {
-    res
-      .status(429)
-      .json(new ApiResponse(429, null, "Too many refresh attempts."));
-  },
+
+  handler: rateLimitHandler("Too many token refresh attempts."),
+});
+
+/* -------------------------
+   DOCUMENT UPLOAD LIMITER (NEW)
+   🔥 Critical for Cloudinary cost control
+------------------------- */
+export const uploadRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
+
+  handler: rateLimitHandler("Too many document uploads. Please slow down."),
+});
+
+/* -------------------------
+   ADMIN RATE LIMITER (NEW)
+------------------------- */
+export const adminRateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 100,
+
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
+
+  handler: rateLimitHandler("Too many admin actions. Please slow down."),
 });
