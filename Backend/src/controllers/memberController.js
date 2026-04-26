@@ -2,7 +2,6 @@ import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/apiResponse.js";
 import memberService from "../services/memberService.js";
 import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
-import ApiError from "../utils/ApiError.js";
 import { normalizeDocuments } from "../utils/normalizeDocuments.js";
 
 /**
