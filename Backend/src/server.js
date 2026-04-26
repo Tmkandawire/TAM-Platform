@@ -13,6 +13,8 @@ import logger from "./utils/logger.js";
 import requestLogger from "./middleware/requestLogger.js";
 import rootRouter from "./routes/index.js";
 import memberRoutes from "./routes/memberRoutes.js";
+import documentRoutes from "./routes/documentRoutes.js";
+
 import errorMiddleware from "./middleware/errorMiddleware.js";
 
 dotenv.config();
@@ -67,6 +69,7 @@ app.use(requestLogger);
 ------------------------- */
 app.use("/api/v1", rootRouter);
 app.use("/api/v1/members", memberRoutes);
+app.use("/api/v1/documents", documentRoutes);
 
 /* -------------------------
    HEALTH CHECK
