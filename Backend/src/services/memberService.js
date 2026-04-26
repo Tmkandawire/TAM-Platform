@@ -4,6 +4,7 @@ import Profile from "../models/Profile.js";
 import User from "../models/User.js";
 import ApiError from "../utils/ApiError.js";
 import logger from "../utils/logger.js";
+import fileService from "./fileService.js";
 
 class MemberService {
   /* -------------------------
@@ -84,18 +85,13 @@ class MemberService {
           (d) => d.documentType === doc.documentType,
         );
 
-        // 🧹 Cleanup old Cloudinary file (non-blocking)
+        // 🧹 CLEANER & SAFER: Cleanup old Cloudinary file via FileService
         if (existingDoc?.publicId) {
-          try {
-            await cloudinary.uploader.destroy(existingDoc.publicId, {
-              resource_type: "auto",
-            });
-          } catch (err) {
-            logger.warn("Cloudinary cleanup failed", {
-              publicId: existingDoc.publicId,
-              error: err.message,
-            });
-          }
+          await fileService.safeDelete(existingDoc.publicId, {
+            userId,
+            documentType: existingDoc.documentType,
+            reason: "document_overwrite",
+          });
         }
 
         const newDoc = {
