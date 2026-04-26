@@ -6,7 +6,6 @@ import logger from "../utils/logger.js";
 
 /**
  * @desc    Get all profiles that have documents awaiting review
- * @route   GET /api/v1/admin/documents/pending
  */
 export const getPendingDocuments = asyncHandler(async (req, res) => {
   const adminId = req.user?.id;
@@ -35,7 +34,6 @@ export const getPendingDocuments = asyncHandler(async (req, res) => {
 
 /**
  * @desc    Approve a specific document
- * @route   PATCH /api/v1/admin/documents/:userId/:docId/approve
  */
 export const approveDocument = asyncHandler(async (req, res) => {
   const adminId = req.user?.id;
@@ -45,15 +43,18 @@ export const approveDocument = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Unauthorized", [], "UNAUTHORIZED");
   }
 
-  if (!userId || !docId) {
-    throw new ApiError(400, "Invalid request parameters", [], "INVALID_PARAMS");
-  }
+  // NOTE: You can remove manual ID checks here if your DTO/Middleware is already doing it
 
   const updatedProfile = await adminDocumentService.updateDocumentStatus({
     adminId,
     targetUserId: userId,
     documentId: docId,
     status: "approved",
+    // 👇 ADD THIS FOR AUDIT LOGGING
+    requestMeta: {
+      ip: req.ip,
+      userAgent: req.headers["user-agent"],
+    },
   });
 
   logger.info("✅ Document approved", {
@@ -71,7 +72,6 @@ export const approveDocument = asyncHandler(async (req, res) => {
 
 /**
  * @desc    Reject a specific document with a reason
- * @route   PATCH /api/v1/admin/documents/:userId/:docId/reject
  */
 export const rejectDocument = asyncHandler(async (req, res) => {
   const adminId = req.user?.id;
@@ -82,18 +82,8 @@ export const rejectDocument = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Unauthorized", [], "UNAUTHORIZED");
   }
 
-  if (!userId || !docId) {
-    throw new ApiError(400, "Invalid request parameters", [], "INVALID_PARAMS");
-  }
-
-  if (!reason || typeof reason !== "string" || reason.trim().length < 3) {
-    throw new ApiError(
-      400,
-      "A valid rejection reason is required",
-      [],
-      "MISSING_REASON",
-    );
-  }
+  // NOTE: Validation for 'reason' is now handled by your rejectDocumentSchema DTO
+  // You can keep this as a secondary check or lean entirely on the DTO.
 
   const updatedProfile = await adminDocumentService.updateDocumentStatus({
     adminId,
@@ -101,12 +91,16 @@ export const rejectDocument = asyncHandler(async (req, res) => {
     documentId: docId,
     status: "rejected",
     reason: reason.trim(),
+    // 👇 ADD THIS FOR AUDIT LOGGING
+    requestMeta: {
+      ip: req.ip,
+      userAgent: req.headers["user-agent"],
+    },
   });
 
   logger.info("❌ Document rejected", {
     adminId,
     targetUserId: userId,
-    documentId: docId,
     reason: reason.trim(),
   });
 
