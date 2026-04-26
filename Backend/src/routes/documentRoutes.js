@@ -4,6 +4,7 @@ import { authRateLimiter } from "../middleware/rateLimitMiddleware.js";
 import { cloudinaryUpload } from "../middleware/cloudinaryUploadMiddleware.js";
 import { transformDocuments } from "../middleware/documentTransformMiddleware.js";
 import { uploadKYCDocuments } from "../controllers/documentController.js";
+import { uploadRateLimiter } from "../middleware/rateLimitMiddleware.js";
 
 const router = express.Router();
 
@@ -25,6 +26,7 @@ const router = express.Router();
 router.post(
   "/upload",
   protect,
+  uploadRateLimiter,
   authRateLimiter,
   cloudinaryUpload,
   transformDocuments,

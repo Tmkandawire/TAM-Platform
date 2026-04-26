@@ -43,7 +43,7 @@ router.get(
 router.patch(
   "/:userId/:docId/approve",
   adminRateLimiter,
-  validate(approveDocumentSchema), // ✅ move validation out of controller
+  validate(approveDocumentSchema),
   approveDocument,
 );
 
