@@ -2,41 +2,38 @@ import ApiError from "../utils/ApiError.js";
 import logger from "../utils/logger.js";
 
 /**
- * Role-based authorization middleware
+ * Role-based access control middleware
  * @param  {...string} allowedRoles
  */
 export const authorize = (...allowedRoles) => {
-  // ✅ Fail fast if misconfigured
+  // ✅ Defensive: ensure roles are provided
   if (!allowedRoles || allowedRoles.length === 0) {
     throw new Error("authorize middleware requires at least one role");
   }
 
+  // Normalize roles (avoid case bugs)
   const normalizedRoles = allowedRoles.map((r) => r.toLowerCase());
 
   return (req, res, next) => {
-    // 🔐 Authentication check
+    // ❗ Do NOT assume protect() ran
     if (!req.user) {
-      logger.warn("Unauthorized access attempt (no user)", {
+      logger.warn("Unauthorized access attempt: no user in request", {
         path: req.originalUrl,
         method: req.method,
       });
 
-      return next(
-        new ApiError(401, "Authentication required", [], "UNAUTHORIZED"),
-      );
+      throw new ApiError(401, "Authentication required", [], "UNAUTHORIZED");
     }
 
     const userRole = req.user.role?.toLowerCase();
 
-    // ❗ Missing role
+    // ❗ Role missing or invalid
     if (!userRole) {
-      logger.warn("User role missing", {
+      logger.warn("User has no role assigned", {
         userId: req.user.id,
       });
 
-      return next(
-        new ApiError(403, "User role not defined", [], "ROLE_MISSING"),
-      );
+      throw new ApiError(403, "User role not defined", [], "ROLE_MISSING");
     }
 
     // ❌ Forbidden
@@ -48,13 +45,11 @@ export const authorize = (...allowedRoles) => {
         path: req.originalUrl,
       });
 
-      return next(
-        new ApiError(
-          403,
-          `Role (${userRole}) is not authorized`,
-          [],
-          "FORBIDDEN_ACCESS",
-        ),
+      throw new ApiError(
+        403,
+        `Role (${userRole}) is not authorized to access this resource`,
+        [],
+        "FORBIDDEN_ACCESS",
       );
     }
 
