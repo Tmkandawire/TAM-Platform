@@ -14,6 +14,7 @@ class AdminDocumentService {
     documentId,
     status,
     reason = null,
+    requestMeta = {}, // Added to avoid 'undefined' errors
   }) {
     // 🔒 Validate IDs
     if (
@@ -67,15 +68,6 @@ class AdminDocumentService {
         );
       }
 
-      if (previousStatus === "approved" && status === "approved") {
-        throw new ApiError(
-          400,
-          "Document already approved",
-          [],
-          "INVALID_STATE",
-        );
-      }
-
       // 3. Apply update
       doc.status = status;
       doc.verifiedBy = adminId;
@@ -88,17 +80,17 @@ class AdminDocumentService {
       await AuditLog.create(
         [
           {
-            adminId,
+            actorId: adminId,
             action: status === "approved" ? "APPROVE_DOC" : "REJECT_DOC",
             targetUserId,
-            details: {
-              documentType: doc.documentType,
-              documentId,
-              previousStatus,
-              newStatus: status,
-              reason,
-            },
-            createdAt: new Date(),
+            documentId,
+            documentType: doc.documentType,
+            previousStatus,
+            newStatus: status,
+            reason: reason?.trim() || null,
+            ip: requestMeta?.ip,
+            userAgent: requestMeta?.userAgent,
+            status: "SUCCESS",
           },
         ],
         { session },
@@ -106,25 +98,16 @@ class AdminDocumentService {
 
       await session.commitTransaction();
 
-      logger.info("🛡️ Document review action", {
+      logger.info("🛡️ Document review action successful", {
         adminId,
         targetUserId,
-        documentId,
-        previousStatus,
-        newStatus: status,
+        docId: documentId,
       });
 
       return profile.toObject();
     } catch (err) {
       await session.abortTransaction();
-
-      logger.error("❌ Admin document update failed", {
-        adminId,
-        targetUserId,
-        documentId,
-        error: err.message,
-      });
-
+      logger.error("❌ Admin document update failed", { error: err.message });
       throw err;
     } finally {
       session.endSession();
