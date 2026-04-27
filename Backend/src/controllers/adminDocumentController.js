@@ -1,69 +1,44 @@
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/ApiResponse.js";
 import adminDocumentService from "../services/adminDocumentService.js";
-import ApiError from "../utils/ApiError.js";
-import logger from "../utils/logger.js";
 
 /**
- * @desc    Get all profiles that have documents awaiting review
+ * @desc    Get review queue (filtered + prioritized)
  */
 export const getPendingDocuments = asyncHandler(async (req, res) => {
-  const adminId = req.user?.id;
+  // ✅ Always use validated & sanitized input
+  const query = req.query;
 
-  if (!adminId) {
-    throw new ApiError(401, "Unauthorized", [], "UNAUTHORIZED");
-  }
-
-  const pendingProfiles = await adminDocumentService.getPendingReviews();
-
-  logger.info("📋 Admin fetched pending document reviews", {
-    adminId,
-    count: pendingProfiles?.length || 0,
+  const result = await adminDocumentService.getPendingReviews({
+    page: query.page,
+    limit: query.limit,
+    status: query.status,
+    documentType: query.documentType,
+    priority: query.priority,
+    sortBy: query.sortBy,
   });
 
-  res
+  return res
     .status(200)
-    .json(
-      new ApiResponse(
-        200,
-        pendingProfiles,
-        "Pending reviews fetched successfully",
-      ),
-    );
+    .json(new ApiResponse(200, result, "Review queue fetched successfully"));
 });
 
 /**
- * @desc    Approve a specific document
+ * @desc    Approve document
  */
 export const approveDocument = asyncHandler(async (req, res) => {
-  const adminId = req.user?.id;
   const { userId, docId } = req.params;
 
-  if (!adminId) {
-    throw new ApiError(401, "Unauthorized", [], "UNAUTHORIZED");
-  }
-
-  // NOTE: You can remove manual ID checks here if your DTO/Middleware is already doing it
-
   const updatedProfile = await adminDocumentService.updateDocumentStatus({
-    adminId,
+    adminId: req.user.id,
     targetUserId: userId,
     documentId: docId,
     status: "approved",
-    // 👇 ADD THIS FOR AUDIT LOGGING
-    requestMeta: {
-      ip: req.ip,
-      userAgent: req.headers["user-agent"],
-    },
+    ip: extractClientIp(req),
+    userAgent: req.get("user-agent") || "unknown",
   });
 
-  logger.info("✅ Document approved", {
-    adminId,
-    targetUserId: userId,
-    documentId: docId,
-  });
-
-  res
+  return res
     .status(200)
     .json(
       new ApiResponse(200, updatedProfile, "Document approved successfully"),
@@ -71,42 +46,35 @@ export const approveDocument = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Reject a specific document with a reason
+ * @desc    Reject document
  */
 export const rejectDocument = asyncHandler(async (req, res) => {
-  const adminId = req.user?.id;
   const { userId, docId } = req.params;
-  const { reason } = req.body;
-
-  if (!adminId) {
-    throw new ApiError(401, "Unauthorized", [], "UNAUTHORIZED");
-  }
-
-  // NOTE: Validation for 'reason' is now handled by your rejectDocumentSchema DTO
-  // You can keep this as a secondary check or lean entirely on the DTO.
 
   const updatedProfile = await adminDocumentService.updateDocumentStatus({
-    adminId,
+    adminId: req.user.id,
     targetUserId: userId,
     documentId: docId,
     status: "rejected",
-    reason: reason.trim(),
-    // 👇 ADD THIS FOR AUDIT LOGGING
-    requestMeta: {
-      ip: req.ip,
-      userAgent: req.headers["user-agent"],
-    },
+    reason: req.body.reason,
+    ip: extractClientIp(req),
+    userAgent: req.get("user-agent") || "unknown",
   });
 
-  logger.info("❌ Document rejected", {
-    adminId,
-    targetUserId: userId,
-    reason: reason.trim(),
-  });
-
-  res
+  return res
     .status(200)
     .json(
       new ApiResponse(200, updatedProfile, "Document rejected successfully"),
     );
 });
+
+/* -------------------------
+   HELPER (Enterprise Safe)
+------------------------- */
+const extractClientIp = (req) => {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip || "unknown";
+};
