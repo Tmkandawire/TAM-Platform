@@ -7,7 +7,6 @@ import logger from "../utils/logger.js";
 const redisOptions = {
   maxRetriesPerRequest: 3,
 
-  // Retry with exponential backoff — waits longer between each retry
   retryStrategy(times) {
     if (times > 5) {
       logger.error("Redis: Max retries reached. Giving up.");
