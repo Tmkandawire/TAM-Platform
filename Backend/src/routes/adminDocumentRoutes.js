@@ -13,33 +13,24 @@ import {
 import {
   approveDocumentSchema,
   rejectDocumentSchema,
+  pendingQuerySchema,
 } from "../dto/adminDocumentDto.js";
 
 const router = express.Router();
 
-/* -------------------------
-   GLOBAL MIDDLEWARE (ADMIN ONLY)
-------------------------- */
+/* GLOBAL ADMIN GUARD */
 router.use(protect);
 router.use(authorize("admin"));
 
-/* -------------------------
-   ROUTES
-------------------------- */
-
-/**
- * @route   GET /api/v1/admin/documents/pending
- * @desc    Get all profiles with documents waiting for review
- */
+/* QUEUE */
 router.get(
   "/pending",
-  adminRateLimiter, // 🔒 prevent dashboard abuse
+  adminRateLimiter,
+  validate(pendingQuerySchema, "query"),
   getPendingDocuments,
 );
 
-/**
- * @route   PATCH /api/v1/admin/documents/:userId/:docId/approve
- */
+/* ACTIONS */
 router.patch(
   "/:userId/:docId/approve",
   adminRateLimiter,
@@ -47,13 +38,10 @@ router.patch(
   approveDocument,
 );
 
-/**
- * @route   PATCH /api/v1/admin/documents/:userId/:docId/reject
- */
 router.patch(
   "/:userId/:docId/reject",
   adminRateLimiter,
-  validate(rejectDocumentSchema), // ✅ enforce reason properly
+  validate(rejectDocumentSchema),
   rejectDocument,
 );
 
