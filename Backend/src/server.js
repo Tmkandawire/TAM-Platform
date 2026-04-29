@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+dotenv.config({ quiet: true });
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
@@ -17,8 +18,6 @@ import documentRoutes from "./routes/documentRoutes.js";
 import adminDocumentRoutes from "./routes/adminDocumentRoutes.js";
 
 import errorMiddleware from "./middleware/errorMiddleware.js";
-
-dotenv.config();
 
 const app = express();
 
