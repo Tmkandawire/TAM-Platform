@@ -6,12 +6,24 @@ import { EVENTS } from "../utils/eventBus.js";
 /* -------------------------
    REDIS CONNECTION
 ------------------------- */
-const connection = new IORedis(
-  process.env.REDIS_URL || "redis://127.0.0.1:6379",
-  {
-    maxRetriesPerRequest: null,
+const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
+
+// BullMQ requires its own connection — never share with the app client
+const connection = new IORedis(REDIS_URL, {
+  maxRetriesPerRequest: null, // ✅ Required by BullMQ
+  keepAlive: 30000,
+  connectTimeout: 10000,
+
+  retryStrategy(times) {
+    if (times > 10) return null; // Give up after 10 attempts
+    return Math.min(times * 200, 3000);
   },
-);
+
+  // ✅ Don't reconnect on ECONNRESET — retryStrategy handles it
+  reconnectOnError(err) {
+    return err.message.includes("READONLY");
+  },
+});
 
 /* -------------------------
    QUEUE EVENTS (OBSERVABILITY)
