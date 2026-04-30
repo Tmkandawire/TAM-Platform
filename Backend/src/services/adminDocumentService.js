@@ -1,128 +1,132 @@
-import mongoose from "mongoose";
-import Profile from "../models/Profile.js";
-import AuditLog from "../models/AuditLog.js";
-import ApiError from "../utils/ApiError.js";
-import logger from "../utils/logger.js";
-import priorityService from "./priorityService.js";
-import eventBus, { EVENTS } from "../utils/eventBus.js";
+/**
+ * @file AdminDocumentService.js
+ * @module services
+ *
+ * Enterprise-grade orchestration layer for document review workflows.
+ *
+ * Responsibilities
+ * ─────────────────────────────────────────────────────────────
+ *  • Coordinate workflow execution across repositories/policies
+ *  • Orchestrate transactional boundaries
+ *  • Coordinate audit creation
+ *  • Coordinate event creation
+ *  • Coordinate post-commit event dispatch
+ *  • Handle bulk workflow orchestration
+ *
+ * This service intentionally does NOT:
+ *  • contain Mongo query construction
+ *  • directly mutate persistence models
+ *  • perform raw database operations
+ *  • contain persistence implementation details
+ */
 
-const ALLOWED_TRANSITIONS = {
-  pending: ["approved", "rejected"],
-  rejected: ["approved"],
-};
+import ApiError from "../utils/apiError.js";
+import logger from "../utils/logger.js";
+
+import { withMongoTransaction } from "../transactions/withMongoTransaction.js";
+
+import documentStatusPolicy from "../policies/documentStatusPolicy.js";
+
+import profileRepository from "../repositories/ProfileRepository.js";
+import { auditLogRepository } from "../repositories/AuditLogRepository.js";
+
+import priorityService from "./priorityService.js";
+
+import {
+  createDocumentAuditEntry,
+  createBulkDocumentAuditEntry,
+} from "../document/documentAuditFactory.js";
+
+import {
+  createDocumentEvent,
+  createBulkDocumentEvent,
+} from "../document/documentEventFactory.js";
 
 class AdminDocumentService {
-  /* -------------------------
+  /* ─────────────────────────────────────────
      SMART REVIEW QUEUE
-  ------------------------- */
+  ───────────────────────────────────────── */
+
   async getPendingReviews({
     page = 1,
     limit = 10,
     status = "pending",
-    priority,
     documentType,
+    priority,
     sortBy = "priority",
   }) {
-    const safePage = Math.max(parseInt(page) || 1, 1);
-    const safeLimit = Math.min(parseInt(limit) || 10, 50);
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(parseInt(limit, 10) || 10, 50);
+
     const skip = (safePage - 1) * safeLimit;
 
-    // Build match
-    const matchStage = { "documents.status": status };
-    if (documentType) {
-      matchStage["documents.documentType"] = documentType;
-    }
+    const { matchStage, filterConditions } =
+      profileRepository.buildReviewQueueCriteria(status, documentType);
 
-    // Build filter conditions (IMPORTANT FIX)
-    const filterConditions = [{ $eq: ["$$doc.status", status] }];
-    if (documentType) {
-      filterConditions.push({
-        $eq: ["$$doc.documentType", documentType],
-      });
-    }
+    const [profiles, totalProfiles] = await Promise.all([
+      profileRepository.getPendingReviewQueue({
+        matchStage,
+        filterConditions,
+        skip,
+        limit: safeLimit * 3,
+      }),
 
-    const pipeline = [
-      { $match: matchStage },
+      profileRepository.countPendingReviews(matchStage),
+    ]);
 
-      {
-        $project: {
-          user: 1,
-          updatedAt: 1,
-          createdAt: 1,
-          tinNumber: 1,
-          documents: {
-            $filter: {
-              input: "$documents",
-              as: "doc",
-              cond: { $and: filterConditions },
-            },
-          },
-        },
-      },
+    let enrichedProfiles = priorityService.injectPriority(profiles);
 
-      {
-        $lookup: {
-          from: "users",
-          localField: "user",
-          foreignField: "_id",
-          as: "user",
-          pipeline: [{ $project: { email: 1, role: 1, status: 1 } }],
-        },
-      },
-      { $unwind: "$user" },
-
-      // buffer for priority sort
-      { $skip: skip },
-      { $limit: safeLimit * 3 },
-    ];
-
-    const profiles = await Profile.aggregate(pipeline);
-
-    // NOTE: DB-level count (documented limitation)
-    const totalProfiles = await Profile.countDocuments(matchStage);
-
-    let enriched = priorityService.injectPriority(profiles);
-
-    // Priority filtering
+    // Optional priority filtering
     if (priority) {
-      const threshold = this._priorityThreshold(priority);
-      enriched = enriched.filter((p) => p.overallPriorityScore >= threshold);
+      const threshold = this.#resolvePriorityThreshold(priority);
+
+      enrichedProfiles = enrichedProfiles.filter(
+        (profile) => profile.overallPriorityScore >= threshold,
+      );
     }
 
-    // Sorting
-    enriched.sort((a, b) => {
+    // Consistent sorting orchestration
+    enrichedProfiles.sort((a, b) => {
       switch (sortBy) {
         case "oldest":
           return new Date(a.updatedAt) - new Date(b.updatedAt);
+
         case "newest":
           return new Date(b.updatedAt) - new Date(a.updatedAt);
+
         case "priority":
         default:
           if (b.overallPriorityScore !== a.overallPriorityScore) {
             return b.overallPriorityScore - a.overallPriorityScore;
           }
+
           return new Date(a.updatedAt) - new Date(b.updatedAt);
       }
     });
 
-    const paginated = enriched.slice(0, safeLimit);
+    const paginatedResults = enrichedProfiles.slice(0, safeLimit);
+
+    const pages = Math.ceil(totalProfiles / safeLimit);
 
     return {
-      data: paginated,
+      data: paginatedResults,
+
       pagination: {
-        totalProfiles, // explicit naming
+        totalProfiles,
         page: safePage,
-        pages: Math.ceil(totalProfiles / safeLimit),
+        pages,
         limit: safeLimit,
-        hasNextPage: safePage < Math.ceil(totalProfiles / safeLimit),
+
+        hasNextPage: safePage < pages,
       },
     };
   }
 
-  /* -------------------------
-     UPDATE DOCUMENT STATUS
-  ------------------------- */
-  async updateDocumentStatus({
+  /* ─────────────────────────────────────────
+     SINGLE DOCUMENT REVIEW
+  ───────────────────────────────────────── */
+
+  async reviewDocument({
     adminId,
     targetUserId,
     documentId,
@@ -131,143 +135,328 @@ class AdminDocumentService {
     ip = null,
     userAgent = null,
   }) {
-    if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
-      throw new ApiError(400, "Invalid user ID", [], "INVALID_USER_ID");
-    }
+    let pendingEvent = null;
 
-    if (!mongoose.Types.ObjectId.isValid(documentId)) {
-      throw new ApiError(400, "Invalid document ID", [], "INVALID_DOC_ID");
-    }
-
-    const session = await mongoose.startSession();
-
-    try {
-      session.startTransaction();
-
-      const profile = await Profile.findOne({ user: targetUserId }).session(
+    const result = await withMongoTransaction(async (session) => {
+      /*
+       * STEP 1
+       * Fetch review context
+       */
+      const reviewContext = await profileRepository.getDocumentForReview(
+        {
+          userId: targetUserId,
+          documentId,
+        },
         session,
       );
-      if (!profile) {
-        throw new ApiError(404, "Profile not found", [], "PROFILE_NOT_FOUND");
-      }
 
-      const doc = profile.documents.id(documentId);
-      if (!doc) {
-        throw new ApiError(404, "Document not found", [], "DOC_NOT_FOUND");
-      }
+      const { profile, document } = reviewContext;
 
-      const previousStatus = doc.status;
+      /*
+       * STEP 2
+       * Policy validation
+       */
+      documentStatusPolicy.assertReviewAllowed({
+        document,
+        nextStatus: status,
+      });
 
-      // Idempotency guard
-      if (previousStatus === status) {
-        throw new ApiError(400, "No status change", [], "NO_OP");
-      }
-
-      // State machine
-      const allowed = ALLOWED_TRANSITIONS[previousStatus] || [];
-      if (!allowed.includes(status)) {
-        throw new ApiError(
-          400,
-          `Invalid transition: ${previousStatus} → ${status}`,
-          [],
-          "INVALID_TRANSITION",
-        );
-      }
-
-      // Expiry guard
-      if (
-        status === "approved" &&
-        doc.expiryDate &&
-        new Date(doc.expiryDate) < new Date()
-      ) {
-        throw new ApiError(
-          400,
-          "Cannot approve expired document",
-          [],
-          "DOC_EXPIRED",
-        );
-      }
-
-      // Apply update
-      doc.status = status;
-      doc.verifiedBy = adminId;
-      doc.verifiedAt = new Date();
-      doc.rejectionReason = status === "rejected" ? reason : null;
-
-      await profile.save({ session });
-
-      // Audit log
-      await AuditLog.create(
-        [
+      /*
+       * STEP 3
+       * Persist workflow decision
+       */
+      const updatedProfile =
+        await profileRepository.applyDocumentReviewDecision(
           {
-            action:
-              status === "approved" ? "DOCUMENT_APPROVED" : "DOCUMENT_REJECTED",
-            user: adminId,
-            target: targetUserId,
-            metadata: {
-              documentId,
-              documentType: doc.documentType,
-              previousStatus,
-              newStatus: status,
-              reason,
-            },
-            ip,
-            userAgent,
-            status: "SUCCESS",
+            userId: targetUserId,
+            documentId,
+            status,
+            adminId,
+            reason,
           },
-        ],
-        { session },
+          session,
+        );
+
+      /*
+       * STEP 4
+       * Persist audit trail
+       */
+      await auditLogRepository.create(
+        createDocumentAuditEntry({
+          adminId,
+          userId: targetUserId,
+          documentId,
+          documentType: document.documentType,
+
+          previousStatus: document.status,
+          newStatus: status,
+
+          reason,
+          ip,
+          userAgent,
+        }),
+        session,
       );
 
-      await session.commitTransaction();
+      /*
+       * STEP 5
+       * Prepare post-commit event
+       */
+      pendingEvent = createDocumentEvent({
+        adminId,
+        userId: targetUserId,
+        documentId,
+        documentType: document.documentType,
+        status,
+        reason,
+      });
 
-      // Event (safe)
-      try {
-        const eventType =
-          status === "approved"
-            ? EVENTS.DOCUMENT_APPROVED
-            : EVENTS.DOCUMENT_REJECTED;
-
-        eventBus.emit(eventType, {
-          userId: targetUserId,
-          adminId,
-          docId: documentId,
-          documentType: doc.documentType,
-          reason,
-        });
-      } catch (err) {
-        logger.warn("⚠️ Event emission failed", { error: err.message });
-      }
-
-      logger.info("🛡️ Document reviewed", {
+      logger.info("Document review completed.", {
         adminId,
         targetUserId,
         documentId,
-        previousStatus,
+
+        previousStatus: document.status,
         newStatus: status,
       });
 
-      return profile.toObject();
-    } catch (err) {
-      await session.abortTransaction();
+      return updatedProfile;
+    });
 
-      logger.error("❌ Document update failed", {
-        adminId,
-        targetUserId,
-        documentId,
-        error: err.message,
-      });
+    /*
+     * STEP 6
+     * Dispatch AFTER commit succeeds
+     */
+    this.#dispatchSafely(pendingEvent);
 
-      throw err;
-    } finally {
-      session.endSession();
+    return result;
+  }
+
+  /* ─────────────────────────────────────────
+     BULK DOCUMENT REVIEW
+  ───────────────────────────────────────── */
+
+  async bulkReviewDocuments({
+    adminId,
+    action,
+    documents,
+    reason = null,
+    ip = null,
+    userAgent = null,
+  }) {
+    if (!Array.isArray(documents) || documents.length === 0) {
+      throw new ApiError(
+        400,
+        "Documents payload must be a non-empty array.",
+        [],
+        "INVALID_BULK_PAYLOAD",
+      );
+    }
+
+    const groupedDocuments = this.#groupDocumentsByUser(documents);
+
+    const results = [];
+    const errors = [];
+
+    for (const [userId, documentIds] of groupedDocuments) {
+      const pendingEvents = [];
+
+      try {
+        await withMongoTransaction(async (session) => {
+          const reviewContext = await Promise.all(
+            documentIds.map((documentId) =>
+              profileRepository.findDocumentForReview(
+                {
+                  userId,
+                  documentId,
+                },
+                session,
+              ),
+            ),
+          );
+
+          const validDocuments = [];
+
+          for (const context of reviewContext) {
+            if (!context || !context.document) {
+              errors.push({
+                userId,
+                code: "DOCUMENT_NOT_FOUND",
+              });
+
+              continue;
+            }
+
+            const { document } = context;
+
+            try {
+              documentStatusPolicy.assertReviewAllowed({
+                document,
+                nextStatus: action,
+              });
+
+              validDocuments.push(document);
+            } catch (err) {
+              errors.push({
+                userId,
+                documentId: String(document._id),
+                code: err.code || "INVALID_REVIEW",
+                message: err.message,
+              });
+            }
+          }
+
+          if (validDocuments.length === 0) {
+            return;
+          }
+
+          /*
+           * Bulk persistence
+           */
+          await profileRepository.applyBulkDocumentReviewDecision(
+            {
+              userId,
+
+              documentIds: validDocuments.map((doc) => doc._id),
+
+              status: action,
+              adminId,
+              reason,
+            },
+            session,
+          );
+
+          /*
+           * Bulk audit persistence
+           */
+          const auditEntries = validDocuments.map((document) =>
+            createBulkDocumentAuditEntry({
+              adminId,
+              userId,
+
+              documentId: document._id,
+              documentType: document.documentType,
+
+              previousStatus: document.status,
+              newStatus: action,
+
+              reason,
+              ip,
+              userAgent,
+            }),
+          );
+
+          await auditLogRepository.createMany(auditEntries, session);
+
+          /*
+           * Prepare events
+           */
+          for (const document of validDocuments) {
+            pendingEvents.push(
+              createBulkDocumentEvent({
+                adminId,
+                userId,
+
+                documentId: document._id,
+                documentType: document.documentType,
+
+                status: action,
+                reason,
+              }),
+            );
+
+            results.push({
+              userId,
+              documentId: String(document._id),
+
+              previousStatus: document.status,
+              newStatus: action,
+            });
+          }
+        });
+
+        /*
+         * Dispatch after commit
+         */
+        this.#dispatchManySafely(pendingEvents);
+      } catch (err) {
+        logger.error("Bulk review transaction failed.", {
+          userId,
+          error: err.message,
+        });
+
+        errors.push({
+          userId,
+          code: "BULK_TRANSACTION_FAILED",
+          message: err.message,
+        });
+      }
+    }
+
+    return {
+      total: documents.length,
+
+      succeeded: results.length,
+      failed: errors.length,
+
+      results,
+      errors,
+    };
+  }
+
+  /* ─────────────────────────────────────────
+     PRIVATE HELPERS
+  ───────────────────────────────────────── */
+
+  #groupDocumentsByUser(documents) {
+    const grouped = new Map();
+
+    for (const { userId, documentId } of documents) {
+      if (!grouped.has(userId)) {
+        grouped.set(userId, []);
+      }
+
+      grouped.get(userId).push(documentId);
+    }
+
+    return grouped;
+  }
+
+  #resolvePriorityThreshold(priority) {
+    switch (priority) {
+      case "HIGH":
+        return 100;
+
+      case "MEDIUM":
+        return 40;
+
+      default:
+        return 0;
     }
   }
 
-  _priorityThreshold(level) {
-    if (level === "HIGH") return 100;
-    if (level === "MEDIUM") return 40;
-    return 0;
+  #dispatchSafely(event) {
+    if (!event) {
+      return;
+    }
+
+    try {
+      eventDispatcher.dispatch(event);
+    } catch (err) {
+      logger.warn("Post-commit event dispatch failed.", {
+        error: err.message,
+      });
+    }
+  }
+
+  #dispatchManySafely(events) {
+    if (!Array.isArray(events) || events.length === 0) {
+      return;
+    }
+
+    for (const event of events) {
+      this.#dispatchSafely(event);
+    }
   }
 }
 
