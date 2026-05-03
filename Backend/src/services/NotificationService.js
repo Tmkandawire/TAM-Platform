@@ -2,169 +2,129 @@
  * @file NotificationService.js
  * @module services
  *
- * Notification orchestration layer for the TAM Platform.
+ * Orchestration layer for notification persistence and delivery.
  *
  * Responsibilities
- * ─────────────────────────────────────────────────────────────
- *  • Serve as the public API for all notification operations
- *  • Validate and sanitize service-level inputs
- *  • Build notification payloads from structured DTOs
- *  • Delegate all persistence to NotificationRepository
- *  • Enforce bulk operation safety limits and atomicity contracts
- *  • Provide read and lifecycle management operations
+ * ─────────────────────────────────────────────
+ *  • Validate incoming DTOs
+ *  • Persist notifications via NotificationRepository
+ *  • Build email payloads and trigger delivery via EmailService
+ *  • Provide read / lifecycle operations on existing notifications
  *
- * This service intentionally does NOT:
- *  • know about admin workflows
- *  • know about document repositories
- *  • contain persistence logic
- *  • perform direct database access
- *  • dispatch emails, push events, or webhooks
+ * This module intentionally does NOT:
+ *  • build notification DTOs (notificationFactory responsibility)
+ *  • own transport concerns (EmailService / provider responsibility)
+ *  • define event names (notificationTypes constants responsibility)
+ *
+ * EmailService is injected via the constructor (not imported at the top).
+ * This keeps the coupling loose and makes swapping to a queue-backed
+ * delivery mechanism a one-line change at the composition root.
  */
 
 import notificationRepository from "../repositories/NotificationRepository.js";
-import { NOTIFICATION_TYPE } from "../models/Notification.js";
+import notificationValidator from "../validators/notificationValidator.js";
+import {
+  buildDocumentApprovedEmail,
+  buildDocumentRejectedEmail,
+} from "../email/factories/emailFactory.js";
+import { DOCUMENT_EVENT } from "../constants/notificationTypes.js";
+import logger from "../utils/logger.js";
+import emailService from "../email/EmailService.js";
 
 /* ─────────────────────────────────────────────
-   CONSTANTS
+   ERRORS
 ───────────────────────────────────────────── */
 
-/**
- * Maximum number of notifications accepted in a single bulk call.
- *
- * Prevents runaway broadcast payloads, accidental full-table fan-out,
- * and memory pressure from oversized arrays.
- *
- * For audiences larger than this limit, callers must chunk their data
- * and call bulkCreateNotifications() in batches.
- */
-const BULK_CREATE_LIMIT = 500;
-
-/**
- * Maximum character lengths for user-supplied string fields.
- * These are enforced at the service boundary before any DB interaction.
- */
-const MAX_LENGTH = Object.freeze({
-  USER_ID: 128,
-  TITLE: 200,
-  MESSAGE: 2000,
-});
-
-/* ─────────────────────────────────────────────
-   INTERNAL VALIDATION HELPERS
-───────────────────────────────────────────── */
-
-/**
- * Validates that a value is a non-empty string after trimming,
- * and that it does not exceed the specified maximum length.
- *
- * @param {unknown} value
- * @param {string}  fieldName
- * @param {number}  maxLength
- * @throws {TypeError}
- */
-function assertString(value, fieldName, maxLength) {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new TypeError(
-      `NotificationService: "${fieldName}" must be a non-empty string.`,
-    );
-  }
-
-  if (value.trim().length > maxLength) {
-    throw new TypeError(
-      `NotificationService: "${fieldName}" must not exceed ${maxLength} characters ` +
-        `(received ${value.trim().length}).`,
-    );
+export class NotificationNotFoundError extends Error {
+  constructor(notificationId) {
+    super(`NotificationService: notification "${notificationId}" not found.`);
+    this.name = "NotificationNotFoundError";
+    this.code = "NOTIFICATION_NOT_FOUND";
   }
 }
 
-/**
- * Validates that a value is a known NOTIFICATION_TYPE member.
- *
- * @param {string} type
- * @throws {TypeError}
- */
-function assertValidType(type) {
-  const validTypes = Object.values(NOTIFICATION_TYPE);
-
-  if (!validTypes.includes(type)) {
-    throw new TypeError(
-      `NotificationService: invalid notification type "${type}". ` +
-        `Expected one of: ${validTypes.join(", ")}.`,
+export class NotificationValidationError extends TypeError {
+  /**
+   * @param {string}   context  - Method name or operation label.
+   * @param {string[]} errors   - Validation error messages.
+   */
+  constructor(context, errors) {
+    super(
+      `NotificationService [${context}]: invalid input → ${errors.join(", ")}`,
     );
-  }
-}
-
-/**
- * Deep-clones a metadata object via JSON serialization.
- *
- * This serves two purposes:
- *  1. Strips prototype chains, preventing prototype pollution attacks.
- *  2. Surfaces circular reference errors immediately at the service boundary
- *     rather than allowing them to propagate as opaque DB errors.
- *
- * The result is frozen to prevent mutation after validation.
- *
- * @param {unknown} metadata
- * @param {string}  fieldName
- * @returns {Readonly<object>}
- * @throws {TypeError}
- */
-function sanitiseMetadata(metadata, fieldName) {
-  if (
-    metadata === null ||
-    typeof metadata !== "object" ||
-    Array.isArray(metadata)
-  ) {
-    throw new TypeError(
-      `NotificationService: "${fieldName}" must be a plain object.`,
-    );
-  }
-
-  try {
-    return Object.freeze(JSON.parse(JSON.stringify(metadata)));
-  } catch {
-    throw new TypeError(
-      `NotificationService: "${fieldName}" must be serializable ` +
-        `(no circular references or non-JSON-safe values).`,
-    );
+    this.name = "NotificationValidationError";
+    this.code = "NOTIFICATION_VALIDATION_ERROR";
+    this.errors = errors;
   }
 }
 
 /* ─────────────────────────────────────────────
-   PAYLOAD BUILDER
+   HELPERS
 ───────────────────────────────────────────── */
 
 /**
- * Validates, sanitises, and normalises a single notification DTO
- * into a clean payload ready for persistence.
+ * Throw `NotificationValidationError` if `validation.valid` is false.
  *
- * This is the canonical validation path for both single and bulk creates.
- * Centralising here ensures both code paths are held to identical standards.
- *
- * @param {Object}  dto
- * @param {string}  dto.userId      - Recipient ObjectId string
- * @param {string}  dto.type        - NOTIFICATION_TYPE member
- * @param {string}  dto.title       - Human-readable title
- * @param {string}  dto.message     - Human-readable body
- * @param {Object}  [dto.metadata]  - Optional structured context payload
- * @returns {{ user: string, type: string, title: string, message: string, metadata: Readonly<Object> }}
- * @throws {TypeError}
+ * @param {{ valid: boolean, errors: string[] }} validation
+ * @param {string} context
  */
-function buildPayload({ userId, type, title, message, metadata = {} }) {
-  assertString(userId, "userId", MAX_LENGTH.USER_ID);
-  assertValidType(type);
-  assertString(title, "title", MAX_LENGTH.TITLE);
-  assertString(message, "message", MAX_LENGTH.MESSAGE);
+function assertValid(validation, context) {
+  if (!validation.valid) {
+    throw new NotificationValidationError(context, validation.errors);
+  }
+}
 
-  const safeMetadata = sanitiseMetadata(metadata, "metadata");
+/**
+ * Assert that a result from the repository is not null/undefined.
+ * Throws `NotificationNotFoundError` if the record was not found.
+ *
+ * @param {unknown} result
+ * @param {string}  notificationId
+ * @returns {unknown}
+ */
+function assertFound(result, notificationId) {
+  if (result === null || result === undefined) {
+    throw new NotificationNotFoundError(notificationId);
+  }
+  return result;
+}
 
-  return Object.freeze({
-    user: userId.trim(),
-    type,
-    title: title.trim(),
-    message: message.trim(),
-    metadata: safeMetadata,
-  });
+/* ─────────────────────────────────────────────
+   EMAIL PAYLOAD BUILDERS
+   Maps a notification DTO to the correct emailFactory call.
+   Returns null for types that have no transactional email.
+   Adding a new type = adding one case here.
+───────────────────────────────────────────── */
+
+/**
+ * Build an email payload from a notification DTO, or return null if
+ * the notification type has no associated transactional email.
+ *
+ * @param {Object} dto - Notification DTO (validated, pre-persisted shape).
+ * @returns {Object|null}
+ */
+function buildEmailPayload(dto) {
+  switch (dto.type) {
+    case DOCUMENT_EVENT.APPROVED:
+      return buildDocumentApprovedEmail({
+        userEmail: dto.userEmail,
+        documentType: dto.documentTitle,
+        links: { dashboardUrl: dto.links?.dashboardUrl ?? null },
+      });
+
+    case DOCUMENT_EVENT.REJECTED:
+      return buildDocumentRejectedEmail({
+        userEmail: dto.userEmail,
+        documentType: dto.documentTitle,
+        reason: dto.reason ?? null,
+        links: { dashboardUrl: dto.links?.dashboardUrl ?? null },
+      });
+
+    default:
+      // Returning null signals to EmailService that this type has no email.
+      // EmailService will log a warning — intentional, surfaces missing wiring.
+      return null;
+  }
 }
 
 /* ─────────────────────────────────────────────
@@ -172,112 +132,86 @@ function buildPayload({ userId, type, title, message, metadata = {} }) {
 ───────────────────────────────────────────── */
 
 class NotificationService {
-  /**
-   * @param {object} repository - NotificationRepository instance.
-   *
-   * Accepting the repository as a constructor argument makes this class
-   * fully testable without module-level patching. In production, the
-   * default export below supplies the real repository automatically.
-   */
-  constructor(repository) {
-    this.#repository = repository;
-  }
-
-  /** @type {object} */
   #repository;
+  #emailService;
+
+  /**
+   * @param {import("../repositories/NotificationRepository.js").default} repository
+   * @param {import("../services/EmailService.js").default | null} [emailService]
+   *   Optional — pass null to disable email delivery (e.g. in tests or
+   *   when transitioning to a queue-backed delivery mechanism).
+   */
+  constructor(repository, emailService = null) {
+    this.#repository = repository;
+    this.#emailService = emailService;
+  }
 
   /* ─────────────────────────────────────────
      CREATION
   ───────────────────────────────────────── */
 
   /**
-   * Creates a single notification for one recipient.
+   * Persist a single notification and trigger email delivery if an
+   * EmailService is configured.
    *
-   * Intended for targeted, event-driven notifications:
-   *  • Document approved
-   *  • Document rejected
-   *  • Account actions
+   * `session` is optional — pass a transaction session when this call
+   * is part of a larger atomic operation.
    *
    * @param {Object}  dto
-   * @param {string}  dto.userId      - Recipient user ObjectId string
-   * @param {string}  dto.type        - NOTIFICATION_TYPE member
-   * @param {string}  dto.title       - Human-readable notification title
-   * @param {string}  dto.message     - Human-readable notification body
-   * @param {Object}  [dto.metadata]  - Optional structured context payload
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<Readonly<Object>>}
-   * @throws {TypeError} on invalid input
+   * @param {unknown} [session]
+   * @returns {Promise<Object>} The persisted notification record.
    */
   async createNotification(dto, session) {
-    const payload = buildPayload(dto);
-    return this.#repository.create(payload, session);
+    assertValid(
+      notificationValidator.validateCreateDto(dto),
+      "createNotification",
+    );
+
+    const record = await this.#repository.create(dto, session);
+
+    logger.info("NotificationService: notification created.", {
+      notificationId: record.id,
+      type: dto.type,
+      userId: dto.userId,
+    });
+
+    await this.#dispatchEmail(dto, record);
+
+    return record;
   }
 
   /**
-   * Creates notifications for multiple recipients in a single operation.
+   * Persist multiple notifications in a single transaction.
+   * A session is required — bulk writes without a transaction are unsafe.
    *
-   * Intended for fan-out scenarios:
-   *  • Broadcast messages
-   *  • Bulk document review actions
-   *  • Future campaign systems
+   * Email dispatch is intentionally skipped for bulk creates.
+   * Bulk notifications are typically system/admin events that do not
+   * require individual transactional emails. Add a bulk email flow here
+   * if requirements change.
    *
-   * All DTOs are validated before any persistence occurs, so the operation
-   * fails fast on bad input rather than producing a partial write.
-   *
-   * ⚠ Atomicity requirement: a Mongoose ClientSession MUST be provided.
-   * This method will throw if session is absent. Callers are responsible
-   * for wrapping this call in a transaction.
-   *
-   * If the recipient list exceeds BULK_CREATE_LIMIT, callers must chunk
-   * the array and call this method in batches.
-   *
-   * @param {Array<{
-   *   userId:    string,
-   *   type:      string,
-   *   title:     string,
-   *   message:   string,
-   *   metadata?: Object
-   * }>} dtos
-   * @param {import('mongoose').ClientSession} session - Required for atomicity.
-   * @returns {Promise<Readonly<Object[]>>}
-   * @throws {TypeError} on invalid input, missing session, or limit exceeded
+   * @param {Object[]} dtos
+   * @param {unknown}  session
+   * @returns {Promise<Object[]>}
    */
   async bulkCreateNotifications(dtos, session) {
-    // Enforce the atomicity contract at runtime, not just in documentation.
     if (!session) {
       throw new TypeError(
-        "NotificationService: bulkCreateNotifications() requires a Mongoose " +
-          "ClientSession. Wrap this call in a transaction to guarantee atomicity.",
+        "NotificationService: bulkCreateNotifications requires a transaction session.",
       );
     }
 
-    if (!Array.isArray(dtos) || dtos.length === 0) {
-      throw new TypeError(
-        "NotificationService: dtos must be a non-empty array.",
-      );
-    }
+    assertValid(
+      notificationValidator.validateBulkCreateDtos(dtos),
+      "bulkCreateNotifications",
+    );
 
-    if (dtos.length > BULK_CREATE_LIMIT) {
-      throw new TypeError(
-        `NotificationService: bulk create limit exceeded. ` +
-          `Received ${dtos.length} items; maximum is ${BULK_CREATE_LIMIT}. ` +
-          `Chunk the input and call bulkCreateNotifications() in batches.`,
-      );
-    }
+    const records = await this.#repository.createMany(dtos, session);
 
-    // Validate every DTO before touching the database.
-    // An error here aborts the entire operation with a clear index reference.
-    const payloads = dtos.map((dto, index) => {
-      try {
-        return buildPayload(dto);
-      } catch (error) {
-        throw new TypeError(
-          `NotificationService: invalid DTO at index ${index}: ${error.message}`,
-        );
-      }
+    logger.info("NotificationService: bulk notifications created.", {
+      count: records.length,
     });
 
-    return this.#repository.createMany(payloads, session);
+    return records;
   }
 
   /* ─────────────────────────────────────────
@@ -285,139 +219,165 @@ class NotificationService {
   ───────────────────────────────────────── */
 
   /**
-   * Returns a single notification by ID.
-   *
-   * @param {string} notificationId
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<Readonly<Object>>}
-   * @throws {NotFoundError}
+   * @param {string}  notificationId
+   * @param {unknown} [session]
+   * @returns {Promise<Object>}
+   * @throws {NotificationNotFoundError}
    */
   async getNotificationById(notificationId, session) {
-    assertString(notificationId, "notificationId", MAX_LENGTH.USER_ID);
-    return this.#repository.findById(notificationId, session);
+    assertValid(
+      notificationValidator.validateNotificationId(notificationId),
+      "getNotificationById",
+    );
+
+    const record = await this.#repository.findById(notificationId, session);
+    return assertFound(record, notificationId);
   }
 
   /**
-   * Returns a paginated notification feed for a user.
-   *
-   * @param {string} userId
-   * @param {{ page?: number, limit?: number, status?: string }} [options]
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<Readonly<Object[]>>}
+   * @param {string}  userId
+   * @param {Object}  [options={}]
+   * @param {unknown} [session]
+   * @returns {Promise<Object[]>}
    */
   async getUserNotifications(userId, options = {}, session) {
-    assertString(userId, "userId", MAX_LENGTH.USER_ID);
+    assertValid(
+      notificationValidator.validateUserId(userId),
+      "getUserNotifications[userId]",
+    );
+    assertValid(
+      notificationValidator.validateQueryOptions(options),
+      "getUserNotifications[options]",
+    );
+
     return this.#repository.findByUser(userId, options, session);
   }
 
   /**
-   * Returns the unread notification count for a user.
-   * Intended for notification badge counts in UI and API surfaces.
-   *
-   * @param {string} userId
-   * @param {import('mongoose').ClientSession} [session]
+   * @param {string}  userId
+   * @param {unknown} [session]
    * @returns {Promise<number>}
    */
   async getUnreadCount(userId, session) {
-    assertString(userId, "userId", MAX_LENGTH.USER_ID);
+    assertValid(notificationValidator.validateUserId(userId), "getUnreadCount");
+
     return this.#repository.countUnreadByUser(userId, session);
   }
 
   /* ─────────────────────────────────────────
-     LIFECYCLE MANAGEMENT
+     LIFECYCLE
   ───────────────────────────────────────── */
 
   /**
-   * Marks a single notification as READ.
-   *
-   * @param {string} notificationId
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<Readonly<Object>>}
-   * @throws {NotFoundError}
+   * @param {string}  notificationId
+   * @param {unknown} [session]
    */
   async markAsRead(notificationId, session) {
-    assertString(notificationId, "notificationId", MAX_LENGTH.USER_ID);
+    assertValid(
+      notificationValidator.validateNotificationId(notificationId),
+      "markAsRead",
+    );
+
     return this.#repository.markAsRead(notificationId, session);
   }
 
   /**
-   * Marks all unread notifications for a user as READ.
-   * Intended for "mark all as read" UI actions.
-   *
-   * @param {string} userId
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<{ modifiedCount: number }>}
+   * @param {string}  userId
+   * @param {unknown} [session]
    */
   async markAllAsRead(userId, session) {
-    assertString(userId, "userId", MAX_LENGTH.USER_ID);
+    assertValid(notificationValidator.validateUserId(userId), "markAllAsRead");
+
     return this.#repository.markAllReadByUser(userId, session);
   }
 
   /**
-   * Archives a single notification.
-   *
-   * Archived notifications are hidden from standard feeds
-   * but retained for audit purposes.
-   *
-   * @param {string} notificationId
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<Readonly<Object>>}
-   * @throws {NotFoundError}
+   * @param {string}  notificationId
+   * @param {unknown} [session]
    */
   async archiveNotification(notificationId, session) {
-    assertString(notificationId, "notificationId", MAX_LENGTH.USER_ID);
+    assertValid(
+      notificationValidator.validateNotificationId(notificationId),
+      "archiveNotification",
+    );
+
     return this.#repository.archive(notificationId, session);
   }
 
   /**
-   * Permanently deletes a single notification.
-   *
-   * Prefer archiveNotification() for standard dismissal flows.
-   * Reserve this for explicit deletion requirements only
-   * (e.g. GDPR erasure, admin correction).
-   *
-   * @param {string} notificationId
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<void>}
-   * @throws {NotFoundError}
+   * @param {string}  notificationId
+   * @param {unknown} [session]
    */
   async deleteNotification(notificationId, session) {
-    assertString(notificationId, "notificationId", MAX_LENGTH.USER_ID);
+    assertValid(
+      notificationValidator.validateNotificationId(notificationId),
+      "deleteNotification",
+    );
+
     return this.#repository.deleteById(notificationId, session);
   }
 
   /**
-   * Permanently deletes all notifications for a user.
-   *
-   * Intended exclusively for account deletion and GDPR erasure flows.
-   * Callers must wrap this in a transaction when coordinating deletion
-   * across multiple collections.
-   *
-   * @param {string} userId
-   * @param {import('mongoose').ClientSession} [session]
-   * @returns {Promise<{ deletedCount: number }>}
+   * @param {string}  userId
+   * @param {unknown} [session]
    */
   async deleteAllUserNotifications(userId, session) {
-    assertString(userId, "userId", MAX_LENGTH.USER_ID);
+    assertValid(
+      notificationValidator.validateUserId(userId),
+      "deleteAllUserNotifications",
+    );
+
     return this.#repository.deleteAllByUser(userId, session);
+  }
+
+  /* ─────────────────────────────────────────
+     PRIVATE — EMAIL DISPATCH
+  ───────────────────────────────────────── */
+
+  /**
+   * Build an email payload for the notification type and dispatch it.
+   *
+   * Failures are logged but do NOT throw — email delivery is best-effort.
+   * A failed email must never roll back a successfully persisted notification.
+   *
+   * @param {Object} dto    - The original notification DTO.
+   * @param {Object} record - The persisted notification record.
+   */
+  async #dispatchEmail(dto, record) {
+    if (!this.#emailService) return;
+
+    const emailPayload = buildEmailPayload(dto);
+
+    try {
+      await this.#emailService.sendForNotification(dto, record, emailPayload);
+
+      if (emailPayload) {
+        logger.info("NotificationService: email dispatched for notification.", {
+          notificationId: record.id,
+          type: dto.type,
+        });
+      }
+    } catch (error) {
+      // Email failure is non-fatal — log and continue.
+      logger.error(
+        "NotificationService: email dispatch failed for notification.",
+        {
+          notificationId: record.id,
+          type: dto.type,
+          error,
+        },
+      );
+    }
   }
 }
 
 /* ─────────────────────────────────────────────
    EXPORTS
+   The default export is the singleton used across the application.
+   EmailService is imported here at the composition root — the only
+   place where the two services are allowed to know about each other.
 ───────────────────────────────────────────── */
 
-/**
- * Named class export — for testing (inject a mock repository)
- * and for any future subclassing needs.
- *
- * Usage in tests:
- *   const service = new NotificationService(mockRepository);
- */
 export { NotificationService };
 
-/**
- * Default singleton export — for standard service-layer consumption.
- * The real repository is wired in here so callers import and use directly.
- */
-export default new NotificationService(notificationRepository);
+export default new NotificationService(notificationRepository, emailService);
