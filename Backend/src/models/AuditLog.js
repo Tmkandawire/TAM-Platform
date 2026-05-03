@@ -1,30 +1,17 @@
 import mongoose from "mongoose";
+import { ALL_AUDIT_ACTIONS } from "../constants/auditActions.js";
 
-/* -------------------------
-   CONSTANTS
-------------------------- */
-const ACTIONS = [
-  "APPROVE_DOC",
-  "REJECT_DOC",
-  "REQUEST_RESUBMISSION",
-  "UPLOAD_DOC",
-  "DELETE_DOC",
-];
-
-/* -------------------------
-   SCHEMA
-------------------------- */
 const auditLogSchema = new mongoose.Schema(
   {
-    // 🔐 What happened
+    // What happened
     action: {
       type: String,
-      enum: ACTIONS,
+      enum: [...ALL_AUDIT_ACTIONS],
       required: true,
       index: true,
     },
 
-    // 👤 Who performed the action (Admin/User)
+    // Who performed the action
     actorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -32,16 +19,23 @@ const auditLogSchema = new mongoose.Schema(
       index: true,
     },
 
-    // 🎯 Who/what was affected
-    targetUserId: {
+    // Who or what was affected (user or broadcast)
+    targetId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
       index: true,
     },
 
-    // 📄 Document-level tracking (critical for KYC)
+    // Target type — tells consumers what targetId refers to
+    targetType: {
+      type: String,
+      enum: ["user", "broadcast", "document"],
+      default: null,
+    },
+
+    // Document-level tracking (KYC)
     documentId: {
       type: mongoose.Schema.Types.ObjectId,
+      default: null,
     },
 
     documentType: {
@@ -53,36 +47,56 @@ const auditLogSchema = new mongoose.Schema(
         "businessCert",
         "tinCertificate",
       ],
+      default: null,
     },
 
-    // 🔄 State tracking (very important)
+    // State transition tracking
     previousStatus: {
       type: String,
-      enum: ["pending", "approved", "rejected", "expired"],
+      enum: [
+        "pending",
+        "active",
+        "suspended",
+        "approved",
+        "rejected",
+        "expired",
+      ],
+      default: null,
     },
 
     newStatus: {
       type: String,
-      enum: ["pending", "approved", "rejected", "expired"],
+      enum: [
+        "pending",
+        "active",
+        "suspended",
+        "approved",
+        "rejected",
+        "expired",
+      ],
+      default: null,
     },
 
-    // 📝 Human-readable explanation
+    // Human-readable explanation
     reason: {
       type: String,
       trim: true,
       maxlength: 500,
+      default: null,
     },
 
-    // 🌐 Request context (security + forensics)
+    // Request context (security + forensics)
     ip: {
       type: String,
+      default: null,
     },
 
     userAgent: {
       type: String,
+      default: null,
     },
 
-    // 📊 Outcome tracking
+    // Outcome
     status: {
       type: String,
       enum: ["SUCCESS", "FAILURE"],
@@ -90,36 +104,24 @@ const auditLogSchema = new mongoose.Schema(
       index: true,
     },
 
-    // 🔍 Flexible but controlled extra data
+    // Flexible extra data — plain object, not Map, so nested values are preserved
     metadata: {
-      type: Map,
-      of: String,
+      type: mongoose.Schema.Types.Mixed,
       default: {},
     },
   },
   {
     timestamps: true,
+    versionKey: false,
   },
 );
 
 /* -------------------------
-   INDEXES (CRITICAL)
+   INDEXES
 ------------------------- */
 auditLogSchema.index({ actorId: 1, createdAt: -1 });
-auditLogSchema.index({ targetUserId: 1, createdAt: -1 });
+auditLogSchema.index({ targetId: 1, createdAt: -1 });
 auditLogSchema.index({ action: 1, createdAt: -1 });
-
-/* -------------------------
-   OPTIONAL: SOFT TTL STRATEGY
-------------------------- */
-// ⚠️ Do NOT auto-delete in strict compliance environments
-// Instead: archive logs externally (S3, BigQuery, etc)
-
-/*
-auditLogSchema.index(
-  { createdAt: 1 },
-  { expireAfterSeconds: 60 * 60 * 24 * 365 } // 1 year if needed
-);
-*/
+auditLogSchema.index({ status: 1, createdAt: -1 });
 
 export default mongoose.model("AuditLog", auditLogSchema);
