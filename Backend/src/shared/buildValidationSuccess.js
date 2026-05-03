@@ -1,4 +1,3 @@
-id = "refactored_buildValidationSuccess";
 /**
  * @file buildValidationSuccess.js
  * @module shared/validation
