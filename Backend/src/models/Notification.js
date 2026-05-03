@@ -24,7 +24,6 @@
 import mongoose from "mongoose";
 
 const { Schema, model } = mongoose;
-
 /* ─────────────────────────────────────────────
    CONSTANTS
 ───────────────────────────────────────────── */
@@ -34,25 +33,11 @@ const { Schema, model } = mongoose;
  *
  * ARCHIVED is intentionally included now to avoid future enum migrations.
  */
-export const NOTIFICATION_STATUS = Object.freeze({
-  UNREAD: "UNREAD",
-  READ: "READ",
-  ARCHIVED: "ARCHIVED",
-});
 
-/**
- * Known machine-readable notification types.
- *
- * Enumerated here to prevent typo-driven silent failures. If notification
- * types become dynamic (e.g. plugin-driven), remove this enum and document
- * that callers are responsible for type correctness.
- */
-export const NOTIFICATION_TYPE = Object.freeze({
-  DOCUMENT_APPROVED: "DOCUMENT_APPROVED",
-  DOCUMENT_REJECTED: "DOCUMENT_REJECTED",
-  BROADCAST: "BROADCAST",
-});
-
+import {
+  NOTIFICATION_TYPE,
+  NOTIFICATION_STATUS,
+} from "../constants/notificationTypes.js";
 /**
  * Maximum lengths prevent:
  *  • accidental oversized payloads
