@@ -4,10 +4,11 @@ import Profile from "../models/Profile.js";
 import ApiError from "../utils/ApiError.js";
 import logger from "../utils/logger.js";
 import auditService from "./auditService.js";
+import { AUDIT_ACTIONS } from "../constants/auditActions.js";
 
 class AdminService {
   /**
-   * 📋 Get all pending members
+   * Get all pending members with pagination.
    */
   async getPendingMembers({ page = 1, limit = 10 }) {
     const skip = (page - 1) * limit;
@@ -34,7 +35,7 @@ class AdminService {
   }
 
   /**
-   * ✅ Approve member
+   * Approve a pending member.
    */
   async approveMember(userId, adminId, reqInfo) {
     const session = await mongoose.startSession();
@@ -75,28 +76,31 @@ class AdminService {
         );
       }
 
-      // ✅ Update user
       user.status = "active";
       user.approvedAt = new Date();
       user.approvedBy = adminId;
       await user.save({ session });
 
-      // ✅ Update profile
       profile.isApproved = true;
       profile.approvedAt = new Date();
       profile.approvedBy = adminId;
       profile.rejectionReason = null;
       await profile.save({ session });
 
-      // 📝 Permanent Audit Log (Part of transaction)
       await auditService.log(
         {
-          action: "MEMBER_APPROVAL",
-          user: adminId,
-          target: userId,
+          action: AUDIT_ACTIONS.MEMBER_APPROVED,
+          actorId: adminId,
+          targetId: userId,
+          targetType: "user",
           ip: reqInfo?.ip,
           userAgent: reqInfo?.userAgent,
-          metadata: { businessName: profile.businessName, email: user.email },
+          previousStatus: "pending",
+          newStatus: "active",
+          metadata: {
+            businessName: profile.businessName,
+            email: user.email,
+          },
         },
         session,
       );
@@ -104,7 +108,7 @@ class AdminService {
       await session.commitTransaction();
 
       logger.info("ADMIN_ACTION", {
-        action: "APPROVE_MEMBER",
+        action: AUDIT_ACTIONS.MEMBER_APPROVED,
         adminId,
         userId,
         timestamp: new Date().toISOString(),
@@ -120,7 +124,7 @@ class AdminService {
   }
 
   /**
-   * ❌ Reject member
+   * Reject a pending member.
    */
   async rejectMember(userId, reason, adminId, reqInfo) {
     if (!reason) {
@@ -149,7 +153,6 @@ class AdminService {
 
       const profile = await Profile.findOne({ user: userId }).session(session);
 
-      // Update user
       user.status = "suspended";
       await user.save({ session });
 
@@ -159,15 +162,20 @@ class AdminService {
         await profile.save({ session });
       }
 
-      // 📝 Permanent Audit Log (Part of transaction)
       await auditService.log(
         {
-          action: "MEMBER_REJECTION",
-          user: adminId,
-          target: userId,
+          action: AUDIT_ACTIONS.MEMBER_REJECTED,
+          actorId: adminId,
+          targetId: userId,
+          targetType: "user",
           ip: reqInfo?.ip,
           userAgent: reqInfo?.userAgent,
-          metadata: { reason },
+          previousStatus: "pending",
+          newStatus: "suspended",
+          reason,
+          metadata: {
+            email: user.email,
+          },
         },
         session,
       );
@@ -175,7 +183,7 @@ class AdminService {
       await session.commitTransaction();
 
       logger.warn("ADMIN_ACTION", {
-        action: "REJECT_MEMBER",
+        action: AUDIT_ACTIONS.MEMBER_REJECTED,
         adminId,
         userId,
         reason,
@@ -192,29 +200,33 @@ class AdminService {
   }
 
   /**
-   * ⛔ Suspend member
+   * Suspend an active member.
    */
   async suspendMember(userId, adminId, reqInfo) {
     const user = await User.findById(userId);
 
     if (!user) {
-      throw new ApiError(404, "User not found");
+      throw new ApiError(404, "User not found", [], "USER_NOT_FOUND");
     }
+
+    const previousStatus = user.status;
 
     user.status = "suspended";
     await user.save();
 
-    // 📝 Permanent Audit Log (Single save, no transaction needed)
     await auditService.log({
-      action: "MEMBER_SUSPENSION",
-      user: adminId,
-      target: userId,
+      action: AUDIT_ACTIONS.MEMBER_SUSPENDED,
+      actorId: adminId,
+      targetId: userId,
+      targetType: "user",
       ip: reqInfo?.ip,
       userAgent: reqInfo?.userAgent,
+      previousStatus,
+      newStatus: "suspended",
     });
 
     logger.warn("ADMIN_ACTION", {
-      action: "SUSPEND_MEMBER",
+      action: AUDIT_ACTIONS.MEMBER_SUSPENDED,
       adminId,
       userId,
       timestamp: new Date().toISOString(),
