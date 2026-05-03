@@ -23,7 +23,8 @@
 
 import mongoose from "mongoose";
 
-import Notification, { NOTIFICATION_STATUS } from "../models/Notification.js";
+import Notification from "../models/Notification.js";
+import { NOTIFICATION_STATUS } from "../constants/notificationTypes.js";
 
 import { NotFoundError } from "../errors/NotFoundError.js";
 
