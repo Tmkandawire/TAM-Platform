@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
+import { ALL_ROLES, ROLES } from "../constants/roles.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -23,8 +24,8 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["admin", "member"],
-      default: "member",
+      enum: [...ALL_ROLES],
+      default: ROLES.MEMBER,
       index: true,
     },
 
@@ -35,7 +36,7 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ✅ Approval metadata (ADMIN WORKFLOW)
+    // Approval metadata (admin workflow)
     approvedAt: {
       type: Date,
       default: null,
@@ -43,7 +44,7 @@ const userSchema = new mongoose.Schema(
 
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User", // admin who approved
+      ref: "User",
       default: null,
     },
 
@@ -52,7 +53,7 @@ const userSchema = new mongoose.Schema(
       ref: "Profile",
     },
 
-    // 🔐 Security
+    // Security
     loginAttempts: {
       type: Number,
       default: 0,
@@ -63,7 +64,7 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // 📊 Audit
+    // Audit
     lastLoginAt: Date,
 
     isDeleted: {
@@ -72,29 +73,33 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    versionKey: false, // removes __v from all documents
+  },
 );
 
 /* -------------------------
    INDEXES
 ------------------------- */
 
-// Unique email (case-insensitive recommended later via collation)
+// Unique email constraint
 userSchema.index({ email: 1 }, { unique: true });
 
-// Compound index for soft-delete queries
+// Compound index for soft-delete queries — makes the single email index redundant, so we omit it
 userSchema.index({ email: 1, isDeleted: 1 });
 
 /* -------------------------
    MIDDLEWARE
 ------------------------- */
 
-// ✅ FIXED: No next() usage
+// Global soft-delete filter — intentionally applies to all find* operations
+// including findById, findOne, findByIdAndUpdate, etc.
 userSchema.pre(/^find/, function () {
   this.where({ isDeleted: false });
 });
 
-// Hash password
+// Hash password before save
 userSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
 
@@ -106,22 +111,22 @@ userSchema.pre("save", async function () {
    METHODS
 ------------------------- */
 
-// Compare password
+// Compare entered password against stored hash
 userSchema.methods.matchPassword = function (enteredPassword) {
   return bcrypt.compare(enteredPassword, this.password);
 };
 
-// Account status
+// Check if account is active
 userSchema.methods.isActive = function () {
   return this.status === "active";
 };
 
-// Lock check
+// Check if account is temporarily locked
 userSchema.methods.isLocked = function () {
   return !!(this.lockUntil && this.lockUntil > Date.now());
 };
 
-// Hide sensitive data
+// Strip sensitive fields from serialized output
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
