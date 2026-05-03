@@ -1,7 +1,7 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/authorize.js";
-import { adminRateLimiter } from "../middleware/rateLimitMiddleware.js";
+import { adminActionLimiter } from "../middleware/rateLimitMiddleware.js";
 import { validate } from "../middleware/validateMiddleware.js";
 
 import {
@@ -25,7 +25,7 @@ router.use(authorize("admin"));
 /* QUEUE */
 router.get(
   "/pending",
-  adminRateLimiter,
+  adminActionLimiter,
   validate(pendingQuerySchema, "query"),
   getPendingDocuments,
 );
@@ -33,14 +33,14 @@ router.get(
 /* ACTIONS */
 router.patch(
   "/:userId/:docId/approve",
-  adminRateLimiter,
+  adminActionLimiter,
   validate(approveDocumentSchema),
   approveDocument,
 );
 
 router.patch(
   "/:userId/:docId/reject",
-  adminRateLimiter,
+  adminActionLimiter,
   validate(rejectDocumentSchema),
   rejectDocument,
 );
