@@ -7,7 +7,7 @@ import {
 } from "../controllers/adminController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
-import { authorize } from "../middleware/roleMiddleware.js";
+import { authorize } from "../middleware/authorize.js";
 
 const router = express.Router();
 
