@@ -1,0 +1,25 @@
+/**
+ * Audit action constants — single source of truth.
+ * Never hardcode action strings in services or controllers.
+ * Always import from here.
+ */
+export const AUDIT_ACTIONS = Object.freeze({
+  // Member lifecycle
+  MEMBER_APPROVED: "MEMBER_APPROVED",
+  MEMBER_REJECTED: "MEMBER_REJECTED",
+  MEMBER_SUSPENDED: "MEMBER_SUSPENDED",
+
+  // Document actions
+  DOCUMENT_APPROVED: "DOCUMENT_APPROVED",
+  DOCUMENT_REJECTED: "DOCUMENT_REJECTED",
+  DOCUMENT_RESUBMIT: "DOCUMENT_RESUBMIT",
+  DOCUMENT_UPLOADED: "DOCUMENT_UPLOADED",
+  DOCUMENT_DELETED: "DOCUMENT_DELETED",
+
+  // Broadcast
+  BROADCAST_SENT: "BROADCAST_SENT",
+  BROADCAST_PARTIALLY_FAILED: "BROADCAST_PARTIALLY_FAILED",
+  BROADCAST_FAILED: "BROADCAST_FAILED",
+});
+
+export const ALL_AUDIT_ACTIONS = Object.freeze(Object.values(AUDIT_ACTIONS));
