@@ -4,12 +4,25 @@ import ApiError from "../utils/ApiError.js";
 import User from "../models/User.js";
 
 /**
- * 🔐 Protect routes using Access Token
+ * Protect routes using Access Token.
  * - Stateless verification
  * - Minimal DB lookup
  * - High performance
+ *
+ * authorize(), denyRoles(), scopeGuard(), atLeastRole()
+ * all live in middleware/authorize.js — import from there.
  */
 export const protect = asyncHandler(async (req, res, next) => {
+  // Guard: fail immediately if secret is not configured
+  if (!process.env.JWT_ACCESS_SECRET) {
+    throw new ApiError(
+      500,
+      "JWT secret not configured",
+      [],
+      "SERVER_MISCONFIG",
+    );
+  }
+
   let token;
 
   // 1. Extract token (cookie OR header)
@@ -38,6 +51,8 @@ export const protect = asyncHandler(async (req, res, next) => {
   }
 
   // 4. Fetch user (lean for performance)
+  // isDeleted selected as defense-in-depth — pre-find hook excludes deleted
+  // users globally, but this guards against future hook weakening
   const user = await User.findById(decoded.id)
     .select("role status isDeleted")
     .lean();
@@ -58,20 +73,3 @@ export const protect = asyncHandler(async (req, res, next) => {
 
   next();
 });
-
-/**
- * 🔐 Role-based authorization (RBAC)
- */
-export const authorize = (...roles) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return next(new ApiError(401, "Not authenticated", [], "NO_AUTH"));
-    }
-
-    if (!roles.includes(req.user.role)) {
-      return next(new ApiError(403, "Forbidden", [], "FORBIDDEN"));
-    }
-
-    next();
-  };
-};
