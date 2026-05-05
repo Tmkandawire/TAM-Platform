@@ -1,8 +1,12 @@
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/apiResponse.js";
 import memberService from "../services/memberService.js";
+import auditService from "../services/auditService.js";
+import { AUDIT_ACTIONS } from "../constants/auditActions.js";
 import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
 import { normalizeDocuments } from "../utils/normalizeDocuments.js";
+import { ValidationError } from "../errors/index.js";
+import logger from "../utils/logger.js";
 
 /**
  * @desc    Create Member Profile (JSON Only)
@@ -16,44 +20,91 @@ export const upsertProfile = asyncHandler(async (req, res) => {
     data: validatedData,
   });
 
-  res
-    .status(201)
-    .json(new ApiResponse(201, profile, "Profile initialized successfully"));
+  logger.info("Member profile created", {
+    userId: req.user.id,
+    profileId: profile._id,
+    requestId: req.context?.requestId,
+  });
+
+  await auditService.log({
+    action: AUDIT_ACTIONS.PROFILE_CREATED,
+    actorId: req.user.id,
+    targetId: profile._id,
+    targetType: "profile",
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    status: "SUCCESS",
+  });
+
+  const response = ApiResponse.created(
+    profile,
+    "Profile initialized successfully.",
+  );
+  return res.status(response.statusCode).json(response);
 });
 
 /**
- * @desc Upload KYC Documents
+ * @desc    Upload KYC Documents
+ * @route   POST /api/v1/members/documents
  */
 export const uploadDocs = asyncHandler(async (req, res) => {
-  // 1. Let the utility handle the heavy lifting and validation
+  // Guard against missing or empty files before passing to normalizeDocuments.
+  // Multer handles type/size — this guard ensures the controller boundary is
+  // explicit about what it expects rather than letting the utility throw
+  // an opaque error on undefined input.
+  if (!req.files || Object.keys(req.files).length === 0) {
+    throw ValidationError.dto(
+      "files",
+      "At least one file is required.",
+      "MISSING_FILES",
+    );
+  }
+
   const documents = normalizeDocuments(req.files, req.body);
 
-  // 2. Pass the clean, normalized array to the service
   const profile = await memberService.handleDocumentUpload({
     userId: req.user.id,
     documents,
   });
 
-  res
-    .status(200)
-    .json(
-      new ApiResponse(200, profile, "Documents uploaded and pending review"),
-    );
+  logger.info("KYC documents uploaded", {
+    userId: req.user.id,
+    documentCount: documents.length,
+    requestId: req.context?.requestId,
+  });
+
+  await auditService.log({
+    action: AUDIT_ACTIONS.DOCUMENT_UPLOADED,
+    actorId: req.user.id,
+    targetId: profile._id,
+    targetType: "document",
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    metadata: { documentCount: documents.length },
+    status: "SUCCESS",
+  });
+
+  const response = ApiResponse.ok(
+    profile,
+    "Documents uploaded and pending review.",
+  );
+  return res.status(response.statusCode).json(response);
 });
 
 /**
  * @desc    Get Current User's Profile
+ * @route   GET /api/v1/members/profile
  */
 export const getMyProfile = asyncHandler(async (req, res) => {
   const profile = await memberService.getProfileByUserId(req.user.id);
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, profile, "Profile retrieved successfully"));
+  const response = ApiResponse.ok(profile, "Profile retrieved successfully.");
+  return res.status(response.statusCode).json(response);
 });
 
 /**
  * @desc    Update Member Profile (JSON Only)
+ * @route   PATCH /api/v1/members/profile
  */
 export const updateProfile = asyncHandler(async (req, res) => {
   const validatedData = updateProfileSchema.parse(req.body);
@@ -63,9 +114,27 @@ export const updateProfile = asyncHandler(async (req, res) => {
     data: validatedData,
   });
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, updatedProfile, "Profile updated successfully"));
+  logger.info("Member profile updated", {
+    userId: req.user.id,
+    profileId: updatedProfile._id,
+    requestId: req.context?.requestId,
+  });
+
+  await auditService.log({
+    action: AUDIT_ACTIONS.PROFILE_UPDATED,
+    actorId: req.user.id,
+    targetId: updatedProfile._id,
+    targetType: "profile",
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    status: "SUCCESS",
+  });
+
+  const response = ApiResponse.ok(
+    updatedProfile,
+    "Profile updated successfully.",
+  );
+  return res.status(response.statusCode).json(response);
 });
 
 /**
@@ -74,29 +143,65 @@ export const updateProfile = asyncHandler(async (req, res) => {
  * @access  Public
  */
 export const getDirectory = asyncHandler(async (req, res) => {
-  const { city, search, page, limit } = req.query;
+  // Coerce query strings to integers before passing to service.
+  // req.query values are always strings — the service guards against
+  // bad values but expects the controller to own the HTTP boundary.
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
+  const { city, search } = req.query;
 
-  const directory = await memberService.getPublicDirectory({
+  const { data, pagination } = await memberService.getPublicDirectory({
     city,
     search,
     page,
     limit,
   });
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, directory, "Directory retrieved successfully"));
+  // pagination.pages (service-computed) is intentionally dropped here.
+  // ApiResponse.paginated() / ApiResponse.empty() own all derived pagination
+  // fields (totalPages, hasNextPage, hasPrevPage).
+  if (data.length === 0) {
+    const response = ApiResponse.empty(
+      { page: pagination.page, limit: pagination.limit },
+      "No members found.",
+    );
+    return res.status(response.statusCode).json(response);
+  }
+
+  const response = ApiResponse.paginated(
+    data,
+    { total: pagination.total, page: pagination.page, limit: pagination.limit },
+    "Directory retrieved successfully.",
+  );
+  return res.status(response.statusCode).json(response);
 });
 
 /**
  * @desc    Submit for Verification
+ * @route   POST /api/v1/members/submit
  */
 export const submitForVerification = asyncHandler(async (req, res) => {
   const profile = await memberService.submitForApproval(req.user.id);
 
-  res
-    .status(200)
-    .json(
-      new ApiResponse(200, profile, "Profile submitted for TAM verification"),
-    );
+  logger.info("Profile submitted for verification", {
+    userId: req.user.id,
+    profileId: profile._id,
+    requestId: req.context?.requestId,
+  });
+
+  await auditService.log({
+    action: AUDIT_ACTIONS.PROFILE_SUBMITTED,
+    actorId: req.user.id,
+    targetId: profile._id,
+    targetType: "profile",
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    status: "SUCCESS",
+  });
+
+  const response = ApiResponse.ok(
+    profile,
+    "Profile submitted for TAM verification.",
+  );
+  return res.status(response.statusCode).json(response);
 });
