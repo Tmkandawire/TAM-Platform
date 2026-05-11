@@ -203,3 +203,10 @@ export const logout = asyncHandler(async (req, res) => {
     .status(response.statusCode)
     .json(response);
 });
+
+// ME
+export const me = asyncHandler(async (req, res) => {
+  // req.user is populated by the protect middleware
+  const response = ApiResponse.ok(req.user, "User fetched.");
+  return res.status(response.statusCode).json(response);
+});
