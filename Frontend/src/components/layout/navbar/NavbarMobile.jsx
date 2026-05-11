@@ -2,13 +2,16 @@
  * @file NavbarMobile.jsx
  * @module components/layout/navbar
  *
- * Premium mobile navbar experience:
- *  • Floating glassmorphism drawer
- *  • Smooth motion hierarchy
- *  • Neutral hover interactions
- *  • Soft active states
- *  • Improved tactile feedback
- *  • Accessibility-preserving architecture
+ * Premium mobile navigation panel.
+ *
+ * Design direction: refined institutional — frosted glass floating panel,
+ * mechanical stagger, TAM red active states, crisp typographic hierarchy.
+ *
+ * Architecture preserved from original:
+ *  • useReducedMotion — zero animation when OS setting is on
+ *  • aria-expanded / aria-controls / aria-modal — full accessibility
+ *  • Focus management via menuButtonRef / mobileDrawerRef
+ *  • AnimatePresence for mount/unmount lifecycle
  */
 
 import { NavLink } from "react-router-dom";
@@ -19,79 +22,70 @@ import { CTA_BUTTONS, NAV_LINKS } from "./navbar.config";
 import NavButton from "./NavButton";
 import { cn } from "../../../utils/cn";
 
-// ─────────────────────────────────────────────────────────────
-// Motion Variants
-// ─────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
+   MOTION VARIANTS
+───────────────────────────────────────────────────────────────────────────── */
 
-const BACKDROP_VARIANTS = {
-  hidden: {
-    opacity: 0,
-  },
-  visible: {
-    opacity: 1,
-    transition: {
-      duration: 0.2,
-      ease: "easeOut",
-    },
-  },
+const REDUCED = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0 } },
+  exit: { opacity: 0, transition: { duration: 0 } },
 };
 
-const MENU_VARIANTS = {
+const BACKDROP = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.22, ease: "easeOut" } },
+  exit: { opacity: 0, transition: { duration: 0.18, ease: "easeIn" } },
+};
+
+const PANEL = {
   hidden: {
     opacity: 0,
-    y: -10,
-    scale: 0.985,
+    y: -8,
+    scale: 0.97,
   },
-
   visible: {
     opacity: 1,
     y: 0,
     scale: 1,
-
     transition: {
-      duration: 0.24,
+      duration: 0.26,
       ease: [0.22, 1, 0.36, 1],
-      staggerChildren: 0.045,
-      delayChildren: 0.03,
+      staggerChildren: 0.055,
+      delayChildren: 0.06,
     },
   },
-
   exit: {
     opacity: 0,
-    y: -8,
-    scale: 0.985,
-
+    y: -6,
+    scale: 0.97,
     transition: {
-      duration: 0.16,
-      ease: "easeInOut",
+      duration: 0.18,
+      ease: "easeIn",
     },
   },
 };
 
-const ITEM_VARIANTS = {
-  hidden: {
-    opacity: 0,
-    y: 6,
-  },
-
+const ITEM = {
+  hidden: { opacity: 0, x: -6 },
   visible: {
     opacity: 1,
-    y: 0,
-
-    transition: {
-      duration: 0.2,
-      ease: [0.22, 1, 0.36, 1],
-    },
+    x: 0,
+    transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
   },
 };
 
-// ─────────────────────────────────────────────────────────────
-// Sub-components
-// ─────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
+   SUB-COMPONENTS
+───────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Single nav link row inside the mobile panel.
+ * Active state uses TAM red background — institutional authority.
+ */
 function MobileNavLink({ path, label, end, onClick }) {
   return (
-    <motion.div variants={ITEM_VARIANTS}>
+    <motion.div variants={ITEM}>
       <NavLink
         to={path}
         end={end}
@@ -99,46 +93,121 @@ function MobileNavLink({ path, label, end, onClick }) {
         className={({ isActive }) =>
           cn(
             // Layout
-            "flex items-center px-4 py-3.5 rounded-xl",
+            "flex items-center gap-3 px-4 py-3 rounded-xl",
 
             // Typography
-            "text-[15px] font-body font-medium",
+            "text-[15px] font-medium tracking-[-0.01em]",
 
             // Motion
-            "transition-all duration-300 ease-out",
-            "transform-gpu will-change-transform",
+            "transition-all duration-200",
 
             // Accessibility
             "focus-visible:outline-none focus-visible:ring-2",
-            "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+            "focus-visible:ring-tam-red focus-visible:ring-offset-2",
 
-            // States
             isActive
               ? [
-                  "bg-primary-50",
-                  "text-primary-700",
-                  "border border-primary-100",
-                  "shadow-sm",
+                  // TAM red active state — clear, authoritative
+                  "bg-tam-red text-white",
+                  "shadow-[0_2px_8px_rgba(var(--color-tam-red-rgb),0.25)]",
                 ]
               : [
                   "text-gray-700",
-                  "hover:bg-gray-100/80",
+                  "hover:bg-gray-100",
                   "hover:text-gray-900",
-                  "hover:translate-x-0.5",
-                  "active:scale-[0.99]",
+                  "active:scale-[0.985]",
                 ],
           )
         }
       >
-        {label}
+        {({ isActive }) => (
+          <>
+            {/* Active indicator dot */}
+            <span
+              className={cn(
+                "flex-shrink-0 w-1.5 h-1.5 rounded-full transition-all duration-200",
+                isActive
+                  ? "bg-white/70"
+                  : "bg-gray-300 group-hover:bg-gray-400",
+              )}
+              aria-hidden="true"
+            />
+            {label}
+          </>
+        )}
       </NavLink>
     </motion.div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────
+/**
+ * Hamburger / close toggle button.
+ * Sized for comfortable mobile tap target (44px).
+ */
+function MenuToggle({ mobileOpen, toggleMenu, menuButtonRef }) {
+  return (
+    <button
+      ref={menuButtonRef}
+      type="button"
+      onClick={toggleMenu}
+      aria-expanded={mobileOpen}
+      aria-controls="mobile-nav-panel"
+      aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
+      className={cn(
+        "lg:hidden flex items-center justify-center",
+        "w-11 h-11 rounded-xl",
+
+        // Surface
+        "bg-white border border-gray-200/80",
+        "shadow-sm",
+
+        // States
+        "hover:bg-gray-50 hover:shadow-md hover:border-gray-300",
+        "active:scale-[0.94]",
+
+        // Motion
+        "transition-all duration-200",
+
+        // Accessibility
+        "focus-visible:outline-none focus-visible:ring-2",
+        "focus-visible:ring-tam-red focus-visible:ring-offset-2",
+      )}
+    >
+      <AnimatePresence mode="wait" initial={false}>
+        {mobileOpen ? (
+          <motion.span
+            key="close"
+            initial={{ opacity: 0, rotate: -90, scale: 0.85 }}
+            animate={{ opacity: 1, rotate: 0, scale: 1 }}
+            exit={{ opacity: 0, rotate: 90, scale: 0.85 }}
+            transition={{ duration: 0.16, ease: "easeInOut" }}
+            className="flex items-center justify-center"
+          >
+            <X className="w-[18px] h-[18px] text-gray-700" aria-hidden="true" />
+          </motion.span>
+        ) : (
+          <motion.span
+            key="menu"
+            initial={{ opacity: 0, rotate: 90, scale: 0.85 }}
+            animate={{ opacity: 1, rotate: 0, scale: 1 }}
+            exit={{ opacity: 0, rotate: -90, scale: 0.85 }}
+            transition={{ duration: 0.16, ease: "easeInOut" }}
+            className="flex items-center justify-center"
+          >
+            <Menu
+              className="w-[18px] h-[18px] text-gray-700"
+              aria-hidden="true"
+            />
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </button>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MAIN COMPONENT
+───────────────────────────────────────────────────────────────────────────── */
 
 export default function NavbarMobile({
   mobileOpen,
@@ -149,137 +218,81 @@ export default function NavbarMobile({
 }) {
   const prefersReducedMotion = useReducedMotion();
 
-  const reducedMotionVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1 },
-    exit: { opacity: 0 },
-  };
+  const backdropVariants = prefersReducedMotion ? REDUCED : BACKDROP;
+  const panelVariants = prefersReducedMotion ? REDUCED : PANEL;
 
   return (
     <>
-      {/* ───────────────── Toggle Button ───────────────── */}
-      <button
-        ref={menuButtonRef}
-        type="button"
-        onClick={toggleMenu}
-        aria-expanded={mobileOpen}
-        aria-controls="mobile-nav-drawer"
-        aria-label={
-          mobileOpen ? "Close navigation menu" : "Open navigation menu"
-        }
-        className={cn(
-          "lg:hidden flex items-center justify-center",
+      {/* ── Toggle button ──────────────────────────────────────────────── */}
+      <MenuToggle
+        mobileOpen={mobileOpen}
+        toggleMenu={toggleMenu}
+        menuButtonRef={menuButtonRef}
+      />
 
-          // Sizing
-          "w-11 h-11 rounded-xl",
-
-          // Visual styling
-          "bg-white/80 text-gray-700",
-          "border border-gray-200/80",
-          "shadow-sm backdrop-blur-md",
-
-          // Interaction
-          "hover:bg-gray-100",
-          "hover:text-gray-900",
-          "hover:shadow-md",
-
-          // Motion
-          "transition-all duration-300 ease-out",
-
-          // Accessibility
-          "focus-visible:outline-none focus-visible:ring-2",
-          "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
-        )}
-      >
-        <AnimatePresence mode="wait" initial={false}>
-          {mobileOpen ? (
-            <motion.span
-              key="close"
-              initial={{ opacity: 0, rotate: -90, scale: 0.9 }}
-              animate={{ opacity: 1, rotate: 0, scale: 1 }}
-              exit={{ opacity: 0, rotate: 90, scale: 0.9 }}
-              transition={{ duration: 0.18 }}
-            >
-              <X className="w-5 h-5" aria-hidden="true" />
-            </motion.span>
-          ) : (
-            <motion.span
-              key="menu"
-              initial={{ opacity: 0, rotate: 90, scale: 0.9 }}
-              animate={{ opacity: 1, rotate: 0, scale: 1 }}
-              exit={{ opacity: 0, rotate: -90, scale: 0.9 }}
-              transition={{ duration: 0.18 }}
-            >
-              <Menu className="w-5 h-5" aria-hidden="true" />
-            </motion.span>
-          )}
-        </AnimatePresence>
-      </button>
-
-      {/* ───────────────── Mobile Drawer ───────────────── */}
+      {/* ── Panel + backdrop ───────────────────────────────────────────── */}
       <AnimatePresence>
         {mobileOpen && (
           <>
-            {/* Backdrop */}
+            {/* Backdrop — click to close */}
             <motion.div
+              key="backdrop"
+              variants={backdropVariants}
               initial="hidden"
               animate="visible"
               exit="hidden"
-              variants={
-                prefersReducedMotion ? reducedMotionVariants : BACKDROP_VARIANTS
-              }
               onClick={closeMenu}
-              className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm lg:hidden"
+              aria-hidden="true"
+              className={cn(
+                "fixed inset-0 z-40 lg:hidden",
+                "bg-black/30 backdrop-blur-[2px]",
+              )}
             />
 
-            {/* Floating Drawer */}
+            {/* Floating panel */}
             <motion.div
+              key="panel"
               ref={mobileDrawerRef}
-              id="mobile-nav-drawer"
+              id="mobile-nav-panel"
               role="dialog"
               aria-modal="true"
               aria-label="Navigation menu"
+              variants={panelVariants}
               initial="hidden"
               animate="visible"
               exit="exit"
-              variants={
-                prefersReducedMotion ? reducedMotionVariants : MENU_VARIANTS
-              }
-              style={{
-                WebkitTapHighlightColor: "transparent",
-              }}
               className={cn(
-                "fixed top-20 left-4 right-4 z-50",
+                // Position — sits just below the navbar
+                "fixed top-[72px] left-3 right-3 z-50 lg:hidden",
 
-                // Layout
-                "overflow-hidden rounded-3xl",
+                // Shape
+                "rounded-2xl overflow-hidden",
 
-                // Glassmorphism
-                "bg-white/92 backdrop-blur-2xl",
+                // Surface — frosted glass
+                "bg-white/95 backdrop-blur-xl",
 
-                // Borders & depth
-                "border border-white/30",
-                "shadow-[0_20px_60px_-15px_rgba(0,0,0,0.25)]",
-
-                // Mobile only
-                "lg:hidden",
+                // Depth
+                "border border-gray-200/60",
+                "shadow-[0_24px_48px_-12px_rgba(0,0,0,0.20),0_0_0_1px_rgba(0,0,0,0.04)]",
               )}
             >
-              {/* Header */}
-              <div
+              {/* ── Panel header ─────────────────────────────────────── */}
+              <motion.div
+                variants={ITEM}
                 className={cn(
                   "flex items-center justify-between",
                   "px-5 py-4",
-                  "border-b border-gray-100/80",
+                  "border-b border-gray-100",
                 )}
               >
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold text-gray-900">
+                <div className="flex items-center gap-2.5">
+                  {/* TAM red accent bar */}
+                  <span
+                    className="w-1 h-5 rounded-full bg-tam-red"
+                    aria-hidden="true"
+                  />
+                  <span className="text-[13px] font-semibold text-gray-500 uppercase tracking-widest">
                     Navigation
-                  </span>
-
-                  <span className="text-xs text-gray-500">
-                    Browse the platform
                   </span>
                 </div>
 
@@ -289,60 +302,58 @@ export default function NavbarMobile({
                   aria-label="Close menu"
                   className={cn(
                     "flex items-center justify-center",
-
-                    "w-9 h-9 rounded-xl",
-
-                    "text-gray-500",
-                    "hover:text-gray-900",
-                    "hover:bg-gray-100/80",
-
-                    "transition-all duration-200",
-
+                    "w-8 h-8 rounded-lg",
+                    "text-gray-400 hover:text-gray-700",
+                    "hover:bg-gray-100",
+                    "transition-all duration-150",
                     "focus-visible:outline-none focus-visible:ring-2",
-                    "focus-visible:ring-primary-500",
+                    "focus-visible:ring-tam-red",
                   )}
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
+              </motion.div>
+
+              {/* ── Nav links ────────────────────────────────────────── */}
+              <div className="px-3 pt-3 pb-2 space-y-1">
+                {NAV_LINKS.map(({ path, label, end }) => (
+                  <MobileNavLink
+                    key={path}
+                    path={path}
+                    label={label}
+                    end={end}
+                    onClick={closeMenu}
+                  />
+                ))}
               </div>
 
-              {/* Navigation Content */}
-              <div className="px-4 py-4">
-                {/* Nav Links */}
-                <div className="space-y-1.5">
-                  {NAV_LINKS.map(({ path, label, end }) => (
-                    <MobileNavLink
-                      key={path}
-                      path={path}
-                      label={label}
-                      end={end}
-                      onClick={closeMenu}
-                    />
-                  ))}
-                </div>
+              {/* ── CTA section ──────────────────────────────────────── */}
+              <motion.div
+                variants={ITEM}
+                className={cn(
+                  "px-3 pt-3 pb-4",
+                  "border-t border-gray-100",
+                  "flex flex-col gap-2.5",
+                  "mt-1",
+                )}
+              >
+                {/* Subtle section label */}
+                <p className="px-1 text-[11px] font-semibold uppercase tracking-widest text-gray-400">
+                  Get started
+                </p>
 
-                {/* CTA Section */}
-                <motion.div
-                  variants={ITEM_VARIANTS}
-                  className={cn(
-                    "mt-5 pt-5",
-                    "border-t border-gray-100/80",
-                    "flex flex-col gap-3",
-                  )}
-                >
-                  {CTA_BUTTONS.map(({ label, path, variant, ariaLabel }) => (
-                    <NavButton
-                      key={label}
-                      to={path}
-                      label={label}
-                      variant={variant}
-                      ariaLabel={ariaLabel}
-                      fullWidth
-                      onClick={closeMenu}
-                    />
-                  ))}
-                </motion.div>
-              </div>
+                {CTA_BUTTONS.map(({ label, path, variant, ariaLabel }) => (
+                  <NavButton
+                    key={label}
+                    to={path}
+                    label={label}
+                    variant={variant}
+                    ariaLabel={ariaLabel}
+                    fullWidth
+                    onClick={closeMenu}
+                  />
+                ))}
+              </motion.div>
             </motion.div>
           </>
         )}
