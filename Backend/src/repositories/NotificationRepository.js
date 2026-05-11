@@ -27,6 +27,7 @@ import Notification from "../models/Notification.js";
 import { NOTIFICATION_STATUS } from "../constants/notificationTypes.js";
 
 import { NotFoundError } from "../errors/NotFoundError.js";
+import { OBJECT_ID_REGEX } from "../dto/shared/objectId.js";
 
 /* ─────────────────────────────────────────────
    CONSTANTS
@@ -160,30 +161,9 @@ function assertValidStatus(status) {
   }
 }
 
-/**
- * Validates that a value is a well-formed MongoDB ObjectId.
- *
- * Fails fast before any DB access to prevent:
- *  • unnecessary round-trips on guaranteed misses
- *  • Mongoose CastErrors surfacing as unhandled 500s
- *  • noisy logs from malformed query attempts
- *  • query abuse via arbitrarily shaped ID values
- *
- * Note: mongoose.Types.ObjectId.isValid() returns true for any 12-byte string,
- * not just hex strings. Casting back and comparing string representations
- * is the only reliable way to confirm a canonical 24-char hex ObjectId.
- *
- * @param {unknown} value
- * @param {string} fieldName  - used in the error message for caller clarity
- * @throws {TypeError}
- */
+// Note: ObjectId validation is intentionally lenient to avoid false negatives.
 function assertValidObjectId(value, fieldName) {
-  const { Types } = mongoose;
-
-  if (
-    !Types.ObjectId.isValid(value) ||
-    String(new Types.ObjectId(value)) !== String(value)
-  ) {
+  if (typeof value !== "string" || !OBJECT_ID_REGEX.test(value)) {
     throw new TypeError(
       `NotificationRepository: invalid ObjectId for field "${fieldName}": ${JSON.stringify(value)}.`,
     );
@@ -340,8 +320,9 @@ export class NotificationRepository {
    * @returns {Promise<Readonly<Object>>}
    * @throws {NotFoundError}
    */
-  async markAsRead(notificationId, session) {
+  async markAsRead(notificationId, userId, session) {
     assertValidObjectId(notificationId, "notificationId");
+    assertValidObjectId(userId, "userId");
 
     const updated = await executeLeanQuery(
       Notification.findByIdAndUpdate(
@@ -393,8 +374,9 @@ export class NotificationRepository {
    * @returns {Promise<Readonly<Object>>}
    * @throws {NotFoundError}
    */
-  async archive(notificationId, session) {
+  async archive(notificationId, userId, session) {
     assertValidObjectId(notificationId, "notificationId");
+    assertValidObjectId(userId, "userId");
 
     const updated = await executeLeanQuery(
       Notification.findByIdAndUpdate(
@@ -423,8 +405,9 @@ export class NotificationRepository {
    * @returns {Promise<void>}
    * @throws {NotFoundError}
    */
-  async deleteById(notificationId, session) {
+  async deleteById(notificationId, userId, session) {
     assertValidObjectId(notificationId, "notificationId");
+    assertValidObjectId(userId, "userId");
 
     const result = await Notification.findByIdAndDelete(
       notificationId,
