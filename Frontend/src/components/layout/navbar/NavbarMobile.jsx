@@ -107,9 +107,11 @@ function MobileNavLink({ path, label, end, onClick }) {
 
             isActive
               ? [
-                  // TAM red active state — clear, authoritative
-                  "bg-tam-red text-white",
-                  "shadow-[0_2px_8px_rgba(var(--color-tam-red-rgb),0.25)]",
+                  // Cleaner active state
+                  "bg-red-50",
+                  "text-red-700",
+                  "border border-red-100",
+                  "shadow-sm",
                 ]
               : [
                   "text-gray-700",
@@ -126,12 +128,11 @@ function MobileNavLink({ path, label, end, onClick }) {
             <span
               className={cn(
                 "flex-shrink-0 w-1.5 h-1.5 rounded-full transition-all duration-200",
-                isActive
-                  ? "bg-white/70"
-                  : "bg-gray-300 group-hover:bg-gray-400",
+                isActive ? "bg-red-500" : "bg-gray-300",
               )}
               aria-hidden="true"
             />
+
             {label}
           </>
         )}
