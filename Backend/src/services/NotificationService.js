@@ -272,13 +272,16 @@ class NotificationService {
    * @param {string}  notificationId
    * @param {unknown} [session]
    */
-  async markAsRead(notificationId, session) {
+  async markAsRead(notificationId, userId, session) {
     assertValid(
       notificationValidator.validateNotificationId(notificationId),
       "markAsRead",
     );
-
-    return this.#repository.markAsRead(notificationId, session);
+    assertValid(
+      notificationValidator.validateUserId(userId),
+      "markAsRead[userId]",
+    );
+    return this.#repository.markAsRead(notificationId, userId, session);
   }
 
   /**
@@ -295,26 +298,33 @@ class NotificationService {
    * @param {string}  notificationId
    * @param {unknown} [session]
    */
-  async archiveNotification(notificationId, session) {
+  async archiveNotification(notificationId, userId, session) {
     assertValid(
       notificationValidator.validateNotificationId(notificationId),
       "archiveNotification",
     );
-
-    return this.#repository.archive(notificationId, session);
+    assertValid(
+      notificationValidator.validateUserId(userId),
+      "archiveNotification[userId]",
+    );
+    return this.#repository.archive(notificationId, userId, session);
   }
 
   /**
    * @param {string}  notificationId
    * @param {unknown} [session]
    */
-  async deleteNotification(notificationId, session) {
+  async deleteNotification(notificationId, userId, session) {
     assertValid(
       notificationValidator.validateNotificationId(notificationId),
       "deleteNotification",
     );
+    assertValid(
+      notificationValidator.validateUserId(userId),
+      "deleteNotification[userId]",
+    );
 
-    return this.#repository.deleteById(notificationId, session);
+    return this.#repository.deleteById(notificationId, userId, session);
   }
 
   /**
