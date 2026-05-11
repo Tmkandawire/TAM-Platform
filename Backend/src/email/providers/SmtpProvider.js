@@ -33,6 +33,7 @@
 import nodemailer from "nodemailer";
 import EmailProvider from "./EmailProvider.js";
 import logger from "../../utils/logger.js";
+import { ServiceUnavailableError } from "../../errors/ServiceUnavailableError.js";
 
 /* ─────────────────────────────────────────────
    INTERNAL HELPERS
@@ -131,7 +132,7 @@ class SmtpProvider extends EmailProvider {
    * into the awaited call chain.
    *
    * @returns {Promise<void>}
-   * @throws {Error} if the SMTP server is unreachable or rejects credentials
+   * @throws {ServiceUnavailableError} if the SMTP server is unreachable or rejects credentials
    */
   async verify() {
     try {
@@ -141,9 +142,7 @@ class SmtpProvider extends EmailProvider {
       logger.error("SmtpProvider: SMTP connection failed.", {
         error: error.message,
       });
-      throw new Error("SmtpProvider: Unable to establish SMTP connection.", {
-        cause: error,
-      });
+      throw ServiceUnavailableError.smtp(error);
     }
   }
 
@@ -157,8 +156,8 @@ class SmtpProvider extends EmailProvider {
    *
    * @param {import('./EmailProvider.js').EmailPayload} payload
    * @returns {Promise<void>}
-   * @throws {TypeError} if payload is invalid
-   * @throws {Error}     if email delivery fails
+   * @throws {TypeError}                if payload is invalid
+   * @throws {ServiceUnavailableError}  if email delivery fails
    */
   async send(payload) {
     // 1. Validate against the base class contract before any I/O.
@@ -194,7 +193,7 @@ class SmtpProvider extends EmailProvider {
         error: error.message,
       });
 
-      throw new Error("SmtpProvider: Email delivery failed.", { cause: error });
+      throw ServiceUnavailableError.smtp(error);
     }
   }
 
@@ -212,7 +211,8 @@ class SmtpProvider extends EmailProvider {
    *   const emailProvider = await SmtpProvider.create();
    *
    * @returns {Promise<SmtpProvider>}
-   * @throws {Error} if env config is invalid or SMTP connection fails
+   * @throws {Error}                    if env config is invalid
+   * @throws {ServiceUnavailableError}  if SMTP connection fails
    */
   static async create() {
     const instance = new SmtpProvider();
