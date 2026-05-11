@@ -10,7 +10,7 @@
  *   3. Service methods
  */
 
-import api from "../utils/api.js";
+import api from "./api.js";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    1. QUERY KEY FACTORY
