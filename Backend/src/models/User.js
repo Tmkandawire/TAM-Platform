@@ -31,7 +31,11 @@ const userSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "active", "suspended"],
+      // "rejected"  — application reviewed and denied at onboarding.
+      //               Distinct from "suspended" (previously active, access revoked).
+      //               Kept separate to support reporting, reapplication flows,
+      //               and notification routing without ambiguity.
+      enum: ["pending", "active", "suspended", "rejected"],
       default: "pending",
       index: true,
     },
@@ -43,6 +47,20 @@ const userSchema = new mongoose.Schema(
     },
 
     approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    // Rejection metadata (admin workflow)
+    // Populated when status transitions to "rejected".
+    // Null for all other statuses.
+    rejectedAt: {
+      type: Date,
+      default: null,
+    },
+
+    rejectedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
@@ -75,7 +93,7 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    versionKey: false, // removes __v from all documents
+    versionKey: false,
   },
 );
 
@@ -83,23 +101,17 @@ const userSchema = new mongoose.Schema(
    INDEXES
 ------------------------- */
 
-// Unique email constraint
 userSchema.index({ email: 1 }, { unique: true });
-
-// Compound index for soft-delete queries — makes the single email index redundant, so we omit it
 userSchema.index({ email: 1, isDeleted: 1 });
 
 /* -------------------------
    MIDDLEWARE
 ------------------------- */
 
-// Global soft-delete filter — intentionally applies to all find* operations
-// including findById, findOne, findByIdAndUpdate, etc.
 userSchema.pre(/^find/, function () {
   this.where({ isDeleted: false });
 });
 
-// Hash password before save
 userSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
 
@@ -111,22 +123,18 @@ userSchema.pre("save", async function () {
    METHODS
 ------------------------- */
 
-// Compare entered password against stored hash
 userSchema.methods.matchPassword = function (enteredPassword) {
   return bcrypt.compare(enteredPassword, this.password);
 };
 
-// Check if account is active
 userSchema.methods.isActive = function () {
   return this.status === "active";
 };
 
-// Check if account is temporarily locked
 userSchema.methods.isLocked = function () {
   return !!(this.lockUntil && this.lockUntil > Date.now());
 };
 
-// Strip sensitive fields from serialized output
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
