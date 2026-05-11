@@ -12,9 +12,17 @@
  *  • aria-expanded / aria-controls / aria-modal — full accessibility
  *  • Focus management via menuButtonRef / mobileDrawerRef
  *  • AnimatePresence for mount/unmount lifecycle
+ *
+ * Fix: menu no longer closes when tapping an already-active link.
+ *  • Removed onClick={closeMenu} from nav links and CTA buttons.
+ *  • Added useEffect that watches location.pathname — closes menu only
+ *    when the route actually changes (i.e. real navigation occurred).
+ *  • Added e.stopPropagation() on the panel so backdrop clicks can
+ *    never bubble through and dismiss it unexpectedly.
  */
 
-import { NavLink } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Menu, X } from "lucide-react";
 
@@ -82,14 +90,17 @@ const ITEM = {
 /**
  * Single nav link row inside the mobile panel.
  * Active state uses TAM red background — institutional authority.
+ *
+ * onClick is intentionally omitted here. The parent closes the menu
+ * via a useEffect on location.pathname, so tapping an already-active
+ * link no longer dismisses the panel with no visible effect.
  */
-function MobileNavLink({ path, label, end, onClick }) {
+function MobileNavLink({ path, label, end }) {
   return (
     <motion.div variants={ITEM}>
       <NavLink
         to={path}
         end={end}
-        onClick={onClick}
         className={({ isActive }) =>
           cn(
             // Layout
@@ -107,7 +118,6 @@ function MobileNavLink({ path, label, end, onClick }) {
 
             isActive
               ? [
-                  // Cleaner active state
                   "bg-red-50",
                   "text-red-700",
                   "border border-red-100",
@@ -218,6 +228,17 @@ export default function NavbarMobile({
   mobileDrawerRef,
 }) {
   const prefersReducedMotion = useReducedMotion();
+  const location = useLocation();
+
+  /**
+   * Close the menu whenever the route actually changes.
+   * This replaces the onClick={closeMenu} pattern on individual links,
+   * which was causing the panel to vanish when tapping an already-active
+   * route (no navigation occurs, so it just looked broken).
+   */
+  useEffect(() => {
+    closeMenu();
+  }, [location.pathname]);
 
   const backdropVariants = prefersReducedMotion ? REDUCED : BACKDROP;
   const panelVariants = prefersReducedMotion ? REDUCED : PANEL;
@@ -262,6 +283,9 @@ export default function NavbarMobile({
               initial="hidden"
               animate="visible"
               exit="exit"
+              // Prevent backdrop clicks from bubbling up through the panel
+              // and triggering closeMenu when interacting with panel content.
+              onClick={(e) => e.stopPropagation()}
               className={cn(
                 // Position — sits just below the navbar
                 "fixed top-[72px] left-3 right-3 z-50 lg:hidden",
@@ -323,7 +347,6 @@ export default function NavbarMobile({
                     path={path}
                     label={label}
                     end={end}
-                    onClick={closeMenu}
                   />
                 ))}
               </div>
@@ -351,7 +374,6 @@ export default function NavbarMobile({
                     variant={variant}
                     ariaLabel={ariaLabel}
                     fullWidth
-                    onClick={closeMenu}
                   />
                 ))}
               </motion.div>
