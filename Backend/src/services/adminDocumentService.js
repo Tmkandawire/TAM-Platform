@@ -20,8 +20,8 @@
  *  • contain persistence implementation details
  */
 
-import ApiError from "../utils/apiError.js";
 import logger from "../utils/logger.js";
+import { ValidationError } from "../errors/index.js";
 
 import { withMongoTransaction } from "../transactions/withMongoTransaction.js";
 
@@ -244,11 +244,13 @@ class AdminDocumentService {
     ip = null,
     userAgent = null,
   }) {
+    // Payload guard — the controller validates via DTO before this point,
+    // but the service enforces its own contract so it remains safe when
+    // called directly (e.g. from tests or future internal callers).
     if (!Array.isArray(documents) || documents.length === 0) {
-      throw new ApiError(
-        400,
+      throw ValidationError.dto(
+        "documents",
         "Documents payload must be a non-empty array.",
-        [],
         "INVALID_BULK_PAYLOAD",
       );
     }
