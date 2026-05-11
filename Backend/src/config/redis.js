@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 import { RedisStore } from "rate-limit-redis";
 import logger from "../utils/logger.js";
+import { ServiceUnavailableError } from "../errors/ServiceUnavailableError.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,24 @@ const redisOptions = {
       logger.error(
         `Redis: Max reconnect attempts (${RETRY_MAX}) reached — giving up. url=${sanitizedUrl}`,
       );
+
+      // Emit a typed infrastructure error so callers and monitoring
+      // receive a structured signal rather than a silent null return.
+      // The error event fires on the client — process.nextTick defers
+      // it past the current retryStrategy call stack so ioredis can
+      // finish its own cleanup before the error propagates.
+      process.nextTick(() => {
+        redisClient.emit(
+          "error",
+          ServiceUnavailableError.redis(
+            new Error(
+              `Redis: Max reconnect attempts (${RETRY_MAX}) exhausted. url=${sanitizedUrl}`,
+            ),
+            { retryable: false }, // permanent exhaustion — retrying will not help
+          ),
+        );
+      });
+
       return null; // stops reconnecting
     }
     const delay = Math.min(
