@@ -21,7 +21,7 @@
  *    never bubble through and dismiss it unexpectedly.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Menu, X } from "lucide-react";
@@ -232,11 +232,16 @@ export default function NavbarMobile({
 
   /**
    * Close the menu whenever the route actually changes.
-   * This replaces the onClick={closeMenu} pattern on individual links,
-   * which was causing the panel to vanish when tapping an already-active
-   * route (no navigation occurs, so it just looked broken).
+   * isMounted ref skips the effect on initial render — without it,
+   * landing on a page (e.g. /about) would immediately call closeMenu()
+   * and make the hamburger button appear broken on first load.
    */
+  const isMounted = useRef(false);
   useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
     closeMenu();
   }, [location.pathname]);
 
