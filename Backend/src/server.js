@@ -26,7 +26,6 @@ import compression from "compression";
 import cookieParser from "cookie-parser";
 import xss from "xss-clean";
 import mongoSanitize from "express-mongo-sanitize";
-import crypto from "crypto";
 
 import connectDB from "./config/db.js";
 import redisClient, { checkRedisHealth } from "./config/redis.js";
@@ -38,6 +37,7 @@ import memberRoutes from "./routes/memberRoutes.js";
 import documentRoutes from "./routes/documentRoutes.js";
 import adminDocumentRoutes from "./routes/adminDocumentRoutes.js";
 import errorMiddleware from "./middleware/errorMiddleware.js";
+import requestContext from "./middleware/requestContext.js";
 
 // ─── 1. Environment validation ────────────────────────────────────────────────
 // Validate before anything else runs. A missing secret that surfaces only
@@ -48,6 +48,7 @@ const REQUIRED_ENV = [
   "MONGO_URI",
   "JWT_ACCESS_SECRET",
   "REDIS_URL",
+  "ALLOWED_ORIGINS",
 ];
 
 const missingEnv = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -94,6 +95,12 @@ app.set("trust proxy", 1);
 
   // ─── Middleware ───────────────────────────────────────────────────────────
 
+  // ── Request context ───────────────────────────────────────────────────────
+  // MUST be first — every middleware below depends on req.context.requestId
+  // for trace correlation. Any middleware registered before this will not
+  // have access to the requestId and will log "unavailable" instead.
+  app.use(requestContext);
+
   // ── Security headers ─────────────────────────────────────────────────────
   app.use(helmet());
   app.use(xss());
@@ -120,15 +127,6 @@ app.set("trust proxy", 1);
 
   // ── Cookies ───────────────────────────────────────────────────────────────
   app.use(cookieParser());
-
-  // ── Request ID ───────────────────────────────────────────────────────────
-  // Attach a unique correlation ID to every request before requestLogger
-  // runs so every log line for a single request shares the same ID.
-  // Invaluable for tracing errors across log lines in production.
-  app.use((req, _res, next) => {
-    req.id = crypto.randomUUID();
-    next();
-  });
 
   // ── Request logging ───────────────────────────────────────────────────────
   app.use(requestLogger);
