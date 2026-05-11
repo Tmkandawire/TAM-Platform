@@ -42,6 +42,14 @@
  * sortOrder is not forwarded to the service — adminDocumentService
  * owns sort direction internally per sortBy case. Exposing sortOrder
  * as a client param is deferred until the service supports it.
+ *
+ * Bulk operations
+ * ─────────────────────────────────────────────
+ * bulkReviewDocuments validates the request body via adminBulkActionSchema
+ * before delegating to the service. The service processes each document
+ * independently and returns a partial success shape — some items may
+ * succeed while others fail within the same request. The response uses
+ * HTTP 207 Multi-Status via ApiResponse.partial() to signal mixed outcomes.
  */
 
 import mongoose from "mongoose";
@@ -49,6 +57,7 @@ import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/apiResponse.js";
 import adminDocumentService from "../services/adminDocumentService.js";
 import { ValidationError } from "../errors/index.js";
+import { adminBulkActionSchema } from "../dto/adminBulkActionDto.js";
 
 /* ─────────────────────────────────────────────
    CONSTANTS
@@ -421,5 +430,77 @@ export const rejectDocument = asyncHandler(async (req, res) => {
     updatedProfile,
     "Document rejected successfully.",
   );
+  return res.status(response.statusCode).json(response);
+});
+
+/**
+ * POST /admin/documents/bulk-review
+ *
+ * Processes a batch of document review decisions in a single request.
+ * Each document is processed independently — some may succeed while
+ * others fail. The response always uses HTTP 207 Multi-Status so clients
+ * know to inspect per-item outcomes rather than treating the status code
+ * as a binary pass/fail signal.
+ *
+ * Validation via adminBulkActionSchema runs before the service is called.
+ * Zod parse errors are mapped to ValidationError and forwarded to
+ * errorMiddleware — the service is never reached with invalid input.
+ */
+export const bulkReviewDocuments = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.user.id, "adminId");
+
+  // ── DTO validation ────────────────────────────────────────────────────
+  // adminBulkActionSchema validates action, documents array (including
+  // per-item ObjectId format and deduplication), and the conditional
+  // reason requirement for rejections.
+  const parsed = adminBulkActionSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    // Map Zod issues to the platform's typed ValidationError.
+    // The first issue is used as the primary message; all issues are
+    // forwarded in the errors array so clients can surface every problem
+    // in a single round trip.
+    const issues = parsed.error.issues;
+
+    throw ValidationError.dto(
+      issues[0]?.path?.join(".") ?? "body",
+      issues[0]?.message ?? "Invalid request body.",
+      "INVALID_BULK_PAYLOAD",
+      issues.map((issue) => ({
+        field: issue.path.join("."),
+        message: issue.message,
+      })),
+    );
+  }
+
+  const { action, documents, reason } = parsed.data;
+
+  // ── Service delegation ────────────────────────────────────────────────
+  // The service processes each document independently inside per-user
+  // transactions and returns a partial success shape regardless of
+  // individual outcomes — it never throws for item-level failures.
+  const result = await adminDocumentService.bulkReviewDocuments({
+    adminId: req.user.id,
+    action,
+    documents,
+    reason: reason ?? null,
+    ...buildReqInfo(req),
+  });
+
+  // ── Response ──────────────────────────────────────────────────────────
+  // HTTP 207 — clients must inspect data.results and data.errors
+  // to determine per-item outcomes. meta carries summary counts for
+  // quick checks without iterating the full arrays.
+  const response = ApiResponse.partial(
+    {
+      results: result.results,
+      errors: result.errors,
+      total: result.total,
+      succeeded: result.succeeded,
+      failed: result.failed,
+    },
+    "Bulk review processed.",
+  );
+
   return res.status(response.statusCode).json(response);
 });
