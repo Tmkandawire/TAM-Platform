@@ -5,7 +5,7 @@ import {
   updateProfile,
   getDirectory,
   submitForVerification,
-  uploadDocs, // ✅ Match the name in memberController.js
+  uploadDocs,
 } from "../controllers/memberController.js";
 
 import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
