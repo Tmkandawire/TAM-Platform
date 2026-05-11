@@ -11,6 +11,7 @@
  *  • Define indexes for query performance
  *  • Define lifecycle-related persistence behaviour
  *  • Enforce readAt/status invariant via pre-save and pre-update hooks
+ *  • Enforce legal status transitions via ALLOWED_TRANSITIONS guard
  *  • Expose static query helpers to prevent scattered raw queries
  *
  * This model intentionally does NOT:
@@ -22,22 +23,17 @@
  */
 
 import mongoose from "mongoose";
-
-const { Schema, model } = mongoose;
-/* ─────────────────────────────────────────────
-   CONSTANTS
-───────────────────────────────────────────── */
-
-/**
- * Notification delivery/read states.
- *
- * ARCHIVED is intentionally included now to avoid future enum migrations.
- */
-
 import {
   NOTIFICATION_TYPE,
   NOTIFICATION_STATUS,
 } from "../constants/notificationTypes.js";
+
+const { Schema, model } = mongoose;
+
+/* ─────────────────────────────────────────────
+   CONSTANTS
+───────────────────────────────────────────── */
+
 /**
  * Maximum lengths prevent:
  *  • accidental oversized payloads
@@ -47,6 +43,31 @@ import {
  */
 const TITLE_MAX_LENGTH = 120;
 const MESSAGE_MAX_LENGTH = 2000;
+
+/**
+ * Permitted status transitions — enforces the documented state machine:
+ *
+ *   UNREAD ──► READ ──► ARCHIVED
+ *     │                    ▲
+ *     └────────────────────┘
+ *
+ * Keyed by the CURRENT status; values are the Set of states it may
+ * transition INTO. Any transition not listed here is illegal.
+ *
+ * Why a map rather than inline conditions:
+ *  • Adding a new status (e.g. SNOOZED) requires one map entry, not
+ *    scattered if-branches across the hook.
+ *  • The allowed transitions are self-documenting and diffable in code
+ *    review without reading hook logic.
+ */
+const ALLOWED_TRANSITIONS = Object.freeze({
+  [NOTIFICATION_STATUS.UNREAD]: new Set([
+    NOTIFICATION_STATUS.READ,
+    NOTIFICATION_STATUS.ARCHIVED,
+  ]),
+  [NOTIFICATION_STATUS.READ]: new Set([NOTIFICATION_STATUS.ARCHIVED]),
+  [NOTIFICATION_STATUS.ARCHIVED]: new Set(), // terminal — no further transitions
+});
 
 /* ─────────────────────────────────────────────
    SUBSCHEMAS
@@ -169,22 +190,9 @@ const NotificationSchema = new Schema(
   },
   {
     timestamps: true,
-
-    /**
-     * Remove __v from serialized output.
-     */
     versionKey: false,
-
-    /**
-     * Ensure virtuals are included consistently if added later.
-     */
-    toJSON: {
-      virtuals: true,
-    },
-
-    toObject: {
-      virtuals: true,
-    },
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   },
 );
 
@@ -197,27 +205,17 @@ const NotificationSchema = new Schema(
  *  • user notification feeds
  *  • newest-first notification queries
  */
-NotificationSchema.index({
-  user: 1,
-  createdAt: -1,
-});
+NotificationSchema.index({ user: 1, createdAt: -1 });
 
 /**
  * Optimizes unread-count queries and unread feeds.
  */
-NotificationSchema.index({
-  user: 1,
-  status: 1,
-  createdAt: -1,
-});
+NotificationSchema.index({ user: 1, status: 1, createdAt: -1 });
 
 /**
  * Optimizes type-based analytics and operational queries.
  */
-NotificationSchema.index({
-  type: 1,
-  createdAt: -1,
-});
+NotificationSchema.index({ type: 1, createdAt: -1 });
 
 /**
  * Partial index on readAt — scoped to documents where readAt is non-null.
@@ -237,25 +235,78 @@ NotificationSchema.index(
 ───────────────────────────────────────────── */
 
 /**
- * Enforces readAt/status consistency on document saves.
+ * Enforces legal status transitions and readAt/status consistency
+ * on document saves.
  *
- * Invariants:
- *  • READ   → readAt must be a Date (auto-set if missing)
- *  • UNREAD → readAt must be null  (auto-cleared if present)
+ * Two responsibilities in one hook (rather than two separate pre-save hooks)
+ * because both operate on the same `status` field modification and the
+ * transition guard must run before the readAt assignment. Splitting them
+ * would require ordering guarantees that Mongoose does not provide between
+ * same-event hooks.
+ *
+ * Transition guard:
+ *  • Runs only when status is being modified.
+ *  • Reads the previous status from Mongoose's internal document state
+ *    via $__getValue — this.status at hook time is already the NEW value.
+ *  • Blocks any transition not listed in ALLOWED_TRANSITIONS.
+ *  • ARCHIVED is terminal — no code path can reopen an archived notification.
+ *
+ * readAt invariants (applied after transition guard passes):
+ *  • READ     → readAt is auto-set if missing (first READ transition only).
+ *  • UNREAD   → readAt is auto-cleared if somehow present.
  *  • ARCHIVED → readAt is preserved as-is (notification may have been
- *               read before archiving)
+ *               read before archiving — the full audit trail is retained).
  *
  * Callers should transition status and let this hook maintain readAt.
  * Direct manipulation of readAt is strongly discouraged.
  */
 NotificationSchema.pre("save", function (next) {
-  if (this.status === NOTIFICATION_STATUS.READ && !this.readAt) {
+  if (!this.isModified("status")) return next();
+
+  // $__getValue reads the committed (pre-modification) value from Mongoose's
+  // internal document state. this.status at this point is already the NEW
+  // value, so we cannot use it to determine the previous state.
+  const previousStatus =
+    this.$__getValue("status") ?? NOTIFICATION_STATUS.UNREAD;
+  const nextStatus = this.status;
+
+  // Skip when status hasn't actually changed — isModified can fire
+  // spuriously when a document is re-saved with identical field values.
+  if (previousStatus === nextStatus) return next();
+
+  // ── Transition guard ───────────────────────────────────────────────────
+  const allowed = ALLOWED_TRANSITIONS[previousStatus];
+
+  if (!allowed) {
+    // Defensive: previousStatus is not a recognised NOTIFICATION_STATUS value.
+    // Most likely a bad migration or a manually inserted document.
+    return next(
+      new Error(
+        `Notification: unrecognised current status "${previousStatus}". ` +
+          `Cannot validate transition to "${nextStatus}".`,
+      ),
+    );
+  }
+
+  if (!allowed.has(nextStatus)) {
+    return next(
+      new Error(
+        `Notification: illegal status transition "${previousStatus}" → "${nextStatus}". ` +
+          `Allowed from "${previousStatus}": ${[...allowed].join(", ") || "none (terminal state)"}.`,
+      ),
+    );
+  }
+
+  // ── readAt invariants (transition is valid) ────────────────────────────
+  if (nextStatus === NOTIFICATION_STATUS.READ && !this.readAt) {
     this.readAt = new Date();
   }
 
-  if (this.status === NOTIFICATION_STATUS.UNREAD && this.readAt) {
+  if (nextStatus === NOTIFICATION_STATUS.UNREAD && this.readAt) {
     this.readAt = null;
   }
+
+  // ARCHIVED: readAt preserved intentionally — no action needed.
 
   next();
 });
@@ -265,7 +316,14 @@ NotificationSchema.pre("save", function (next) {
  *
  * `pre("save")` only fires for document-level saves. Direct update calls
  * (findOneAndUpdate, updateMany, etc.) bypass it entirely. This hook
- * mirrors the same invariants for the update path.
+ * mirrors the same readAt invariants for the update path.
+ *
+ * Transition guard is intentionally NOT duplicated here — update operations
+ * in the repository already scope their queries to the correct current status
+ * (e.g. `{ status: UNREAD }` filter on markAsRead), which prevents illegal
+ * transitions at the query level. Adding a full guard here would require
+ * reading the current document status in every update hook, adding a
+ * DB round-trip per write that the repository-level scoping already prevents.
  *
  * Applies to: findOneAndUpdate, updateOne, updateMany.
  */
@@ -344,15 +402,11 @@ NotificationSchema.statics.findFeedByUser = function (
   userId,
   { page = 1, limit = 20 } = {},
 ) {
-  // Defensive pagination normalization
   const safePage = Math.max(Number.parseInt(page, 10) || 1, 1);
-
-  // Prevent abusive or accidental oversized queries
   const safeLimit = Math.min(
     Math.max(Number.parseInt(limit, 10) || 20, 1),
     100,
   );
-
   const skip = (safePage - 1) * safeLimit;
 
   return this.find({ user: userId })
@@ -360,6 +414,7 @@ NotificationSchema.statics.findFeedByUser = function (
     .skip(skip)
     .limit(safeLimit);
 };
+
 /**
  * Marks all unread notifications for a user as READ in a single update.
  *
@@ -405,3 +460,12 @@ NotificationSchema.statics.markAllReadByUser = function (userId) {
 const Notification = model("Notification", NotificationSchema);
 
 export default Notification;
+
+/**
+ * Re-exported so existing imports from this file (e.g. notificationFactory.js
+ * which does `import { NOTIFICATION_TYPE } from "../../models/Notification.js"`)
+ * continue to resolve without modification.
+ *
+ * Canonical definitions live in constants/notificationTypes.js.
+ */
+export { NOTIFICATION_TYPE, NOTIFICATION_STATUS };
