@@ -2,13 +2,13 @@
  * @file NavbarMobile.jsx
  * @module components/layout/navbar
  *
- * Refactored mobile navbar:
+ * Premium mobile navbar experience:
  *  • Floating glassmorphism drawer
- *  • Backdrop overlay
- *  • Improved spacing + hierarchy
- *  • Pill-style active nav items
- *  • Enhanced motion polish
- *  • Preserved accessibility architecture
+ *  • Smooth motion hierarchy
+ *  • Neutral hover interactions
+ *  • Soft active states
+ *  • Improved tactile feedback
+ *  • Accessibility-preserving architecture
  */
 
 import { NavLink } from "react-router-dom";
@@ -24,33 +24,46 @@ import { cn } from "../../../utils/cn";
 // ─────────────────────────────────────────────────────────────
 
 const BACKDROP_VARIANTS = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1 },
+  hidden: {
+    opacity: 0,
+  },
+  visible: {
+    opacity: 1,
+    transition: {
+      duration: 0.2,
+      ease: "easeOut",
+    },
+  },
 };
 
 const MENU_VARIANTS = {
   hidden: {
     opacity: 0,
-    y: -12,
-    scale: 0.98,
+    y: -10,
+    scale: 0.985,
   },
+
   visible: {
     opacity: 1,
     y: 0,
     scale: 1,
+
     transition: {
-      duration: 0.22,
-      ease: "easeOut",
-      staggerChildren: 0.05,
-      delayChildren: 0.04,
+      duration: 0.24,
+      ease: [0.22, 1, 0.36, 1],
+      staggerChildren: 0.045,
+      delayChildren: 0.03,
     },
   },
+
   exit: {
     opacity: 0,
     y: -8,
-    scale: 0.98,
+    scale: 0.985,
+
     transition: {
       duration: 0.16,
+      ease: "easeInOut",
     },
   },
 };
@@ -58,13 +71,16 @@ const MENU_VARIANTS = {
 const ITEM_VARIANTS = {
   hidden: {
     opacity: 0,
-    y: 8,
+    y: 6,
   },
+
   visible: {
     opacity: 1,
     y: 0,
+
     transition: {
-      duration: 0.18,
+      duration: 0.2,
+      ease: [0.22, 1, 0.36, 1],
     },
   },
 };
@@ -82,14 +98,35 @@ function MobileNavLink({ path, label, end, onClick }) {
         onClick={onClick}
         className={({ isActive }) =>
           cn(
+            // Layout
             "flex items-center px-4 py-3.5 rounded-xl",
+
+            // Typography
             "text-[15px] font-body font-medium",
-            "transition-all duration-200",
+
+            // Motion
+            "transition-all duration-300 ease-out",
+            "transform-gpu will-change-transform",
+
+            // Accessibility
             "focus-visible:outline-none focus-visible:ring-2",
             "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+
+            // States
             isActive
-              ? "bg-primary-500 text-white shadow-sm"
-              : "text-gray-700 hover:bg-gray-100 hover:text-gray-900",
+              ? [
+                  "bg-primary-50",
+                  "text-primary-700",
+                  "border border-primary-100",
+                  "shadow-sm",
+                ]
+              : [
+                  "text-gray-700",
+                  "hover:bg-gray-100/80",
+                  "hover:text-gray-900",
+                  "hover:translate-x-0.5",
+                  "active:scale-[0.99]",
+                ],
           )
         }
       >
@@ -112,6 +149,12 @@ export default function NavbarMobile({
 }) {
   const prefersReducedMotion = useReducedMotion();
 
+  const reducedMotionVariants = {
+    hidden: { opacity: 0 },
+    visible: { opacity: 1 },
+    exit: { opacity: 0 },
+  };
+
   return (
     <>
       {/* ───────────────── Toggle Button ───────────────── */}
@@ -126,10 +169,24 @@ export default function NavbarMobile({
         }
         className={cn(
           "lg:hidden flex items-center justify-center",
+
+          // Sizing
           "w-11 h-11 rounded-xl",
-          "bg-gray-100/80 text-gray-700 shadow-sm",
-          "hover:bg-gray-200 hover:text-gray-900",
-          "transition-all duration-200",
+
+          // Visual styling
+          "bg-white/80 text-gray-700",
+          "border border-gray-200/80",
+          "shadow-sm backdrop-blur-md",
+
+          // Interaction
+          "hover:bg-gray-100",
+          "hover:text-gray-900",
+          "hover:shadow-md",
+
+          // Motion
+          "transition-all duration-300 ease-out",
+
+          // Accessibility
           "focus-visible:outline-none focus-visible:ring-2",
           "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
         )}
@@ -138,20 +195,20 @@ export default function NavbarMobile({
           {mobileOpen ? (
             <motion.span
               key="close"
-              initial={{ opacity: 0, rotate: -90 }}
-              animate={{ opacity: 1, rotate: 0 }}
-              exit={{ opacity: 0, rotate: 90 }}
-              transition={{ duration: 0.15 }}
+              initial={{ opacity: 0, rotate: -90, scale: 0.9 }}
+              animate={{ opacity: 1, rotate: 0, scale: 1 }}
+              exit={{ opacity: 0, rotate: 90, scale: 0.9 }}
+              transition={{ duration: 0.18 }}
             >
               <X className="w-5 h-5" aria-hidden="true" />
             </motion.span>
           ) : (
             <motion.span
               key="menu"
-              initial={{ opacity: 0, rotate: 90 }}
-              animate={{ opacity: 1, rotate: 0 }}
-              exit={{ opacity: 0, rotate: -90 }}
-              transition={{ duration: 0.15 }}
+              initial={{ opacity: 0, rotate: 90, scale: 0.9 }}
+              animate={{ opacity: 1, rotate: 0, scale: 1 }}
+              exit={{ opacity: 0, rotate: -90, scale: 0.9 }}
+              transition={{ duration: 0.18 }}
             >
               <Menu className="w-5 h-5" aria-hidden="true" />
             </motion.span>
@@ -169,15 +226,10 @@ export default function NavbarMobile({
               animate="visible"
               exit="hidden"
               variants={
-                prefersReducedMotion
-                  ? {
-                      hidden: { opacity: 0 },
-                      visible: { opacity: 1 },
-                    }
-                  : BACKDROP_VARIANTS
+                prefersReducedMotion ? reducedMotionVariants : BACKDROP_VARIANTS
               }
               onClick={closeMenu}
-              className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
+              className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm lg:hidden"
             />
 
             {/* Floating Drawer */}
@@ -191,28 +243,45 @@ export default function NavbarMobile({
               animate="visible"
               exit="exit"
               variants={
-                prefersReducedMotion
-                  ? {
-                      hidden: { opacity: 0 },
-                      visible: { opacity: 1 },
-                      exit: { opacity: 0 },
-                    }
-                  : MENU_VARIANTS
+                prefersReducedMotion ? reducedMotionVariants : MENU_VARIANTS
               }
+              style={{
+                WebkitTapHighlightColor: "transparent",
+              }}
               className={cn(
                 "fixed top-20 left-4 right-4 z-50",
-                "rounded-2xl overflow-hidden",
-                "border border-white/20",
-                "bg-white/95 backdrop-blur-xl",
-                "shadow-2xl",
+
+                // Layout
+                "overflow-hidden rounded-3xl",
+
+                // Glassmorphism
+                "bg-white/92 backdrop-blur-2xl",
+
+                // Borders & depth
+                "border border-white/30",
+                "shadow-[0_20px_60px_-15px_rgba(0,0,0,0.25)]",
+
+                // Mobile only
                 "lg:hidden",
               )}
             >
               {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-                <span className="text-sm font-semibold text-gray-900">
-                  Navigation
-                </span>
+              <div
+                className={cn(
+                  "flex items-center justify-between",
+                  "px-5 py-4",
+                  "border-b border-gray-100/80",
+                )}
+              >
+                <div className="flex flex-col">
+                  <span className="text-sm font-semibold text-gray-900">
+                    Navigation
+                  </span>
+
+                  <span className="text-xs text-gray-500">
+                    Browse the platform
+                  </span>
+                </div>
 
                 <button
                   type="button"
@@ -220,9 +289,15 @@ export default function NavbarMobile({
                   aria-label="Close menu"
                   className={cn(
                     "flex items-center justify-center",
-                    "w-9 h-9 rounded-lg",
-                    "text-gray-500 hover:text-gray-900",
-                    "hover:bg-gray-100 transition-colors",
+
+                    "w-9 h-9 rounded-xl",
+
+                    "text-gray-500",
+                    "hover:text-gray-900",
+                    "hover:bg-gray-100/80",
+
+                    "transition-all duration-200",
+
                     "focus-visible:outline-none focus-visible:ring-2",
                     "focus-visible:ring-primary-500",
                   )}
@@ -231,22 +306,29 @@ export default function NavbarMobile({
                 </button>
               </div>
 
-              {/* Navigation Links */}
-              <div className="px-4 py-4 space-y-1.5">
-                {NAV_LINKS.map(({ path, label, end }) => (
-                  <MobileNavLink
-                    key={path}
-                    path={path}
-                    label={label}
-                    end={end}
-                    onClick={closeMenu}
-                  />
-                ))}
+              {/* Navigation Content */}
+              <div className="px-4 py-4">
+                {/* Nav Links */}
+                <div className="space-y-1.5">
+                  {NAV_LINKS.map(({ path, label, end }) => (
+                    <MobileNavLink
+                      key={path}
+                      path={path}
+                      label={label}
+                      end={end}
+                      onClick={closeMenu}
+                    />
+                  ))}
+                </div>
 
                 {/* CTA Section */}
                 <motion.div
                   variants={ITEM_VARIANTS}
-                  className="pt-4 mt-4 border-t border-gray-100 flex flex-col gap-3"
+                  className={cn(
+                    "mt-5 pt-5",
+                    "border-t border-gray-100/80",
+                    "flex flex-col gap-3",
+                  )}
                 >
                   {CTA_BUTTONS.map(({ label, path, variant, ariaLabel }) => (
                     <NavButton
