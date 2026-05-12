@@ -78,7 +78,13 @@ const MAX_OFFSET = 5000;
 const REASON_MIN_LENGTH = 10;
 const REASON_MAX_LENGTH = 500;
 
-const VALID_STATUSES = new Set(["pending", "approved", "rejected", "expired"]);
+const VALID_STATUSES = new Set([
+  "pending",
+  "approved",
+  "rejected",
+  "expired",
+  "resubmission_required",
+]);
 
 const VALID_DOCUMENT_TYPES = new Set([
   "nationalId",
@@ -502,5 +508,83 @@ export const bulkReviewDocuments = asyncHandler(async (req, res) => {
     "Bulk review processed.",
   );
 
+  return res.status(response.statusCode).json(response);
+});
+
+/**
+ * PATCH /admin/documents/:userId/:docId/request-resubmission
+ *
+ * Requests resubmission of a specific document.
+ *
+ * Distinct from rejection — this is a soft, recoverable decision.
+ * The document moves to "resubmission_required" status and the member
+ * is told exactly which documents to re-upload and why, without losing
+ * their application entirely.
+ *
+ * Body:
+ *   reason            {string}   — Why resubmission is needed. Min 10 chars.
+ *   documentsRequired {string[]} — Document types the member must re-upload.
+ *                                  At least one required. Values must be valid
+ *                                  DOCUMENT_TYPES from adminDocumentDto.js.
+ *
+ * Both fields are validated and sanitised before the service is called —
+ * the service never receives empty reason strings or empty arrays.
+ */
+export const requestResubmission = asyncHandler(async (req, res) => {
+  const { userId, docId } = req.params;
+
+  assertValidObjectId(req.user.id, "adminId");
+  assertValidObjectId(userId, "userId");
+  assertValidObjectId(docId, "docId");
+
+  // ── reason validation ─────────────────────────────────────────────────
+  // Resubmission reason uses the same validator as rejection reason.
+  // Both are admin-authored, member-facing strings — same length rules apply.
+  const trimmedReason = assertValidReason(req.body.reason);
+
+  // ── documentsRequired validation ──────────────────────────────────────
+  // Must be a non-empty array of known document type strings.
+  // Validated at the controller boundary — the service never receives
+  // an empty array or unknown type strings.
+  const { documentsRequired } = req.body;
+
+  if (!Array.isArray(documentsRequired) || documentsRequired.length === 0) {
+    throw ValidationError.dto(
+      "documentsRequired",
+      "At least one document type must be specified for resubmission.",
+      "MISSING_VALUE",
+    );
+  }
+
+  const invalidTypes = documentsRequired.filter(
+    (type) => !VALID_DOCUMENT_TYPES.has(type),
+  );
+
+  if (invalidTypes.length > 0) {
+    throw ValidationError.dto(
+      "documentsRequired",
+      `Invalid document type(s): ${invalidTypes.join(", ")}. Must be one of: ${[...VALID_DOCUMENT_TYPES].join(", ")}.`,
+      "INVALID_VALUE",
+    );
+  }
+
+  // Deduplicate — a client sending ["nationalId", "nationalId"] is a
+  // client bug, not a reason to fail the request. Deduplicate silently
+  // before the service call so the service always receives a clean array.
+  const uniqueDocumentsRequired = [...new Set(documentsRequired)];
+
+  const updatedProfile = await adminDocumentService.requestResubmission({
+    adminId: req.user.id,
+    targetUserId: userId,
+    documentId: docId,
+    reason: trimmedReason,
+    documentsRequired: uniqueDocumentsRequired,
+    ...buildReqInfo(req),
+  });
+
+  const response = ApiResponse.ok(
+    updatedProfile,
+    "Resubmission requested successfully.",
+  );
   return res.status(response.statusCode).json(response);
 });
