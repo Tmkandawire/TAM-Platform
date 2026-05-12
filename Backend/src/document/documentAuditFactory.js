@@ -40,6 +40,10 @@
 export const DOCUMENT_AUDIT_ACTIONS = Object.freeze({
   approved: "DOCUMENT_APPROVED",
   rejected: "DOCUMENT_REJECTED",
+  // Semantically distinct from DOCUMENT_REJECTED — resubmission is a
+  // recoverable, member-actionable state. Rejection is terminal.
+  // Maps to AUDIT_ACTIONS.DOCUMENT_RESUBMISSION_REQUESTED in auditActions.js.
+  resubmission_required: "DOCUMENT_RESUBMISSION_REQUESTED",
 });
 
 /**
@@ -62,7 +66,7 @@ const AUDIT_STATUS_SUCCESS = "SUCCESS";
  * @property {string}      userId         - The target user's ID (document owner).
  * @property {string}      docId          - The document's ID.
  * @property {string}      documentType   - The document type (e.g. "NRC", "TPIN").
- * @property {string}      action         - The action applied: "approved" | "rejected".
+ * @property {string}      action         - The action applied: "approved" | "rejected" | "resubmission_required".
  * @property {string}      previousStatus - The document's status before this action.
  * @property {string|null} reason         - Rejection reason; null for approvals.
  * @property {string|null} ip             - Request IP for the audit trail.
@@ -273,9 +277,14 @@ function buildMetadata(params, bulk = false) {
     reason: params.reason,
   };
 
-  // Bulk flag — only present on bulk entries to keep single-entry documents clean
-  if (bulk) {
-    metadata.bulk = true;
+  // Injected only on resubmission entries — records exactly which document
+  // types the admin flagged so the audit trail is self-contained without
+  // requiring a join back to the profile document.
+  if (
+    Array.isArray(params.documentsRequired) &&
+    params.documentsRequired.length > 0
+  ) {
+    metadata.documentsRequired = params.documentsRequired;
   }
 
   // Correlation metadata — injected when provided, omitted entirely otherwise.
