@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { objectId } from "./shared/objectId.js";
 
 /* -------------------------
    CONSTANTS (DRY + SAFE)
@@ -12,17 +13,17 @@ export const DOCUMENT_TYPES = [
 ];
 
 export const PRIORITY_LEVELS = ["HIGH", "MEDIUM", "LOW"];
-export const REVIEW_STATUSES = ["pending", "rejected", "approved"];
+export const REVIEW_STATUSES = [
+  "pending",
+  "rejected",
+  "approved",
+  "resubmission_required",
+];
 export const SORT_OPTIONS = ["priority", "oldest", "newest"];
 
 /* -------------------------
    SHARED HELPERS
 ------------------------- */
-const objectId = (fieldName = "ID") =>
-  z
-    .string({ required_error: `${fieldName} is required` })
-    .trim()
-    .regex(/^[0-9a-fA-F]{24}$/, `Invalid ${fieldName} format`);
 
 const documentParams = z
   .object({
