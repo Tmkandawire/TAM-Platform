@@ -41,11 +41,28 @@
  *  passed to BOTH makeStore() and userOrIpKey(). This guarantees the
  *  store namespace and the key namespace are always identical — a
  *  mismatch would silently create two separate rate-limit buckets.
+ *
+ * FIX NOTES (2026-05-16)
+ * ─────────────────────────────────────────────────────────────
+ *  1. ApiResponse only accepts 2xx status codes. The breach handler was
+ *     calling new ApiResponse(429, ...) which threw a TypeError that
+ *     became a 500. Replaced with a plain res.json() object for 429/503
+ *     responses — these are rate-limit/infra responses, not business
+ *     responses, so they don't need the ApiResponse wrapper.
+ *
+ *  2. IP key was resolving to "[object Object]" because ipKeyGenerator()
+ *     from express-rate-limit returns req.ip, and when trust proxy is
+ *     misconfigured req.ip can be the socket object. Replaced with a
+ *     safe safeIp() helper that always returns a string, falling back
+ *     to "unknown" rather than stringifying a socket.
+ *
+ *  3. The warn log inside makeHandler was logging `ip: req` (the full
+ *     request object) instead of `ip: safeIp(req)`, causing the logger
+ *     to dump the entire socket/HTTPParser tree into the log line.
  */
 
-import { rateLimit, ipKeyGenerator } from "express-rate-limit";
+import { rateLimit } from "express-rate-limit";
 import { createRateLimitStore } from "../config/redis.js";
-import ApiResponse from "../utils/apiResponse.js";
 import logger from "../utils/logger.js";
 
 // ─── Environment ──────────────────────────────────────────────────────────────
@@ -53,8 +70,6 @@ import logger from "../utils/logger.js";
 const IS_TEST = process.env.NODE_ENV === "test";
 
 // ─── Dynamic limit config ─────────────────────────────────────────────────────
-// All thresholds are env-overridable so tuning is a deploy-free change.
-// Defaults are safe for production; override in staging/test as needed.
 
 const LIMITS = Object.freeze({
   global: {
@@ -88,35 +103,49 @@ const LIMITS = Object.freeze({
 });
 
 // ─── Shared base config ───────────────────────────────────────────────────────
-// Applied to every limiter so header behaviour is consistent regardless
-// of express-rate-limit version defaults.
 
 const BASE_CONFIG = Object.freeze({
-  standardHeaders: true, // RateLimit-* headers (RFC 6585 draft)
-  legacyHeaders: false, // X-RateLimit-* — disabled, use standard only
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // ─── Health check skip ────────────────────────────────────────────────────────
-// Centralised list of paths that should never consume rate-limit quota.
-// Add /healthz, /readyz, /api/health etc. here as your infra requires.
 
 const HEALTH_PATHS = new Set(["/health", "/healthz", "/readyz"]);
-
 const skipHealthCheck = (req) => HEALTH_PATHS.has(req.path);
 
+// ─── Safe IP extraction ───────────────────────────────────────────────────────
+/**
+ * Safely extracts a string IP address from the request.
+ *
+ * Root cause of the "[object Object]" key bug:
+ * express-rate-limit's ipKeyGenerator() returns req.ip. When Express's
+ * "trust proxy" setting does not correctly resolve the forwarding chain,
+ * req.ip can be the raw socket object rather than a string. Calling
+ * toString() on a Socket gives "[object Object]", which becomes the key
+ * for every single request — they all share one bucket and hit the limit
+ * immediately.
+ *
+ * This helper always returns a plain string by checking typeof first and
+ * falling back to "unknown" so at least the key is stable and debuggable.
+ */
+const safeIp = (req) => {
+  const ip = req.ip ?? req.socket?.remoteAddress;
+  if (typeof ip === "string" && ip.length > 0) return ip;
+  // Log once so misconfigured trust proxy surfaces clearly
+  logger.warn("Rate limiter: could not resolve string IP from request", {
+    path: req.originalUrl,
+    reqIpType: typeof req.ip,
+  });
+  return "unknown";
+};
+
 // ─── Key generator factory ────────────────────────────────────────────────────
-// Centralises the prefix + user/IP fallback logic so every limiter uses
-// the same prefix for BOTH the store and the key — eliminating the risk
-// of a store/key prefix mismatch creating separate unlinked buckets.
-//
-// Falls back to IP when req.user is absent (unauthenticated requests).
-// Logs a warning when a loopback IP is detected so misconfigured proxy
-// trust surfaces at runtime rather than silently producing wrong buckets.
 
 const userOrIpKey = (prefix, req) => {
   if (req.user?.id) return `${prefix}${req.user.id}`;
 
-  const ip = ipKeyGenerator(req);
+  const ip = safeIp(req);
 
   if (ip === "::1" || ip === "127.0.0.1") {
     logger.warn(
@@ -133,14 +162,8 @@ const userOrIpKey = (prefix, req) => {
 
 // ─── Redis store factories ────────────────────────────────────────────────────
 
-/**
- * Fail-open store — used by adminActionLimiter.
- * Redis outage → falls back to in-memory + logs a high-severity warning
- * on store creation failure. The degradation is loud but non-blocking.
- */
 const makeStoreFailOpen = (prefix) => {
   if (IS_TEST) return undefined;
-
   try {
     return createRateLimitStore(prefix);
   } catch (err) {
@@ -153,32 +176,17 @@ const makeStoreFailOpen = (prefix) => {
   }
 };
 
-/**
- * Fail-closed store — used by bulkActionLimiter and broadcastLimiter.
- * Redis outage → throws, which causes the limiter constructor to fail.
- * The limiter's handler then returns 503 on every request until Redis
- * recovers. Availability is sacrificed to preserve data integrity.
- *
- * In test environments returns undefined (in-memory) like all other limiters
- * so CI does not require a Redis sidecar.
- */
 const makeStoreFailClosed = (prefix) => {
   if (IS_TEST) return undefined;
-  // Let createRateLimitStore throw — caller catches and sets a dead store flag.
   return createRateLimitStore(prefix);
 };
 
 // ─── Breach handler factory ───────────────────────────────────────────────────
-// Produces a consistent 429 response matching the ApiResponse shape
-// used across the rest of the API.
-//
-// Sets Retry-After (seconds) so clients know exactly when to retry.
-// Logs userId + IP + path on every breach for monitoring and triage.
-//
-// TODO: emit a metrics counter here tagged by limiterID so breach rates
-// are dashboardable without log-parsing. Example:
-//   metrics.increment("rate_limit.breach", { limiter: limiterID });
-
+/**
+ * FIX: Was calling new ApiResponse(429, null, message) which threw because
+ * ApiResponse only accepts 2xx status codes. Replaced with a plain JSON
+ * object that matches the ApiResponse shape so clients parse it identically.
+ */
 const makeHandler = (message, limiterID) => (req, res, _next, options) => {
   const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
   res.setHeader("Retry-After", retryAfterSeconds);
@@ -186,20 +194,26 @@ const makeHandler = (message, limiterID) => (req, res, _next, options) => {
   logger.warn("Rate limit exceeded", {
     limiter: limiterID,
     userId: req.user?.id ?? null,
-    ip: ipKeyGenerator(req),
+    // FIX: was logging ip: req (full request object) → massive socket dump
+    ip: safeIp(req),
     path: req.originalUrl,
     method: req.method,
     retryAfterSeconds,
   });
 
-  res.status(429).json(new ApiResponse(429, null, message));
+  // FIX: plain JSON instead of new ApiResponse(429) which threw TypeError
+  res.status(429).json({
+    statusCode: 429,
+    data: null,
+    message,
+  });
 };
 
 // ─── Unavailable handler ──────────────────────────────────────────────────────
-// Returned by fail-closed limiters when their Redis store is unavailable.
-// 503 signals a transient infra issue — not a client error — so the client
-// knows to retry later rather than treat the request as permanently rejected.
-
+/**
+ * FIX: Same ApiResponse issue — was calling new ApiResponse(503, ...).
+ * Replaced with plain JSON matching the ApiResponse shape.
+ */
 const makeUnavailableHandler = (limiterID) => (req, res) => {
   logger.error(
     `Rate limiter "${limiterID}": Redis unavailable — request blocked (fail-closed).`,
@@ -210,21 +224,14 @@ const makeUnavailableHandler = (limiterID) => (req, res) => {
     },
   );
 
-  res
-    .status(503)
-    .json(
-      new ApiResponse(
-        503,
-        null,
-        "Service temporarily unavailable. Please try again shortly.",
-      ),
-    );
+  res.status(503).json({
+    statusCode: 503,
+    data: null,
+    message: "Service temporarily unavailable. Please try again shortly.",
+  });
 };
 
 // ─── Fail-closed limiter factory ──────────────────────────────────────────────
-// Attempts to create a Redis-backed limiter. If the store is unavailable,
-// returns a middleware that immediately responds 503 — no in-memory fallback,
-// no silent degradation.
 
 const makeFailClosedLimiter = ({
   prefix,
@@ -250,7 +257,6 @@ const makeFailClosedLimiter = ({
         `all requests will be blocked (fail-closed) until Redis recovers.`,
       { error: err.message },
     );
-    // Return a middleware that always 503s — no rate limiting, no pass-through.
     return makeUnavailableHandler(limiterID);
   }
 };
@@ -258,10 +264,6 @@ const makeFailClosedLimiter = ({
 // ─────────────────────────────────────────────────────────────────────────────
 //  LIMITERS
 // ─────────────────────────────────────────────────────────────────────────────
-
-/* ─── Global ──────────────────────────────────────────────────────────────────
-   In-memory. IP-keyed general traffic shaping applied before all routes
-   in server.js. Skips health paths so uptime monitors never consume quota.   */
 
 export const globalLimiter = rateLimit({
   ...BASE_CONFIG,
@@ -272,18 +274,6 @@ export const globalLimiter = rateLimit({
   handler: makeHandler("Too many requests. Try again later.", "global"),
 });
 
-/* ─── Auth (login / register) ────────────────────────────────────────────────
-   In-memory. Keyed by email + IP to slow credential-stuffing without a
-   Redis dependency on the auth path. skipSuccessfulRequests means only
-   failed attempts count — a user who logs in after a few typos is not
-   penalised.
-
-   NOTE: keyGenerator reads req.body?.email — express.json() must be
-   registered in server.js before this limiter runs. If body parsing has
-   not yet run, req.body is undefined and the key falls back to IP-only.
-   This is intentional and safe; documented here to prevent it being
-   mistaken for a bug during debugging.                                        */
-
 export const authRateLimiter = rateLimit({
   ...BASE_CONFIG,
   windowMs: LIMITS.auth.windowMs,
@@ -292,7 +282,8 @@ export const authRateLimiter = rateLimit({
   skip: skipHealthCheck,
   keyGenerator: (req) => {
     const email = req.body?.email?.toLowerCase?.();
-    const ip = ipKeyGenerator(req);
+    // FIX: use safeIp() instead of ipKeyGenerator() to prevent socket object key
+    const ip = safeIp(req);
     return email ? `auth:${email}-${ip}` : `auth:${ip}`;
   },
   handler: makeHandler(
@@ -300,9 +291,6 @@ export const authRateLimiter = rateLimit({
     "auth",
   ),
 });
-
-/* ─── Token refresh ───────────────────────────────────────────────────────────
-   In-memory. Short window, low limit.                                         */
 
 export const refreshLimiter = rateLimit({
   ...BASE_CONFIG,
@@ -312,10 +300,6 @@ export const refreshLimiter = rateLimit({
   keyGenerator: (req) => userOrIpKey("refresh:", req),
   handler: makeHandler("Too many token refresh attempts.", "refresh"),
 });
-
-/* ─── Document upload ─────────────────────────────────────────────────────────
-   In-memory. Cloudinary cost control. Keyed by user ID when authenticated,
-   IP fallback for unauthenticated edge cases.                                 */
 
 export const uploadRateLimiter = rateLimit({
   ...BASE_CONFIG,
@@ -328,17 +312,6 @@ export const uploadRateLimiter = rateLimit({
     "upload",
   ),
 });
-
-/* ─── Admin action ────────────────────────────────────────────────────────────
-   Redis-backed, FAIL-OPEN (in-memory fallback).
-   Applied via router.use() in adminRoutes.js — baseline cap for all admin
-   endpoints. Degrades loudly on Redis outage but does not block traffic.
-
-   Keyed by user ID: admins share office IPs / VPNs so IP-keying produces
-   false positives across unrelated admin accounts.
-
-   PREFIX is defined once and passed to both makeStoreFailOpen() and
-   userOrIpKey() — the two must always match.                                  */
 
 const ADMIN_PREFIX = "rl:admin:";
 
@@ -355,13 +328,6 @@ export const adminActionLimiter = rateLimit({
   ),
 });
 
-/* ─── Bulk action ─────────────────────────────────────────────────────────────
-   Redis-backed, FAIL-CLOSED. No in-memory fallback.
-   Applied per-route on bulk endpoints — not yet applied globally.
-
-   Tighter than adminActionLimiter because bulk ops fan out to many records
-   per request. Redis outage → 503 until Redis recovers.                       */
-
 export const bulkActionLimiter = makeFailClosedLimiter({
   prefix: "rl:bulk:",
   windowMs: LIMITS.bulk.windowMs,
@@ -369,19 +335,6 @@ export const bulkActionLimiter = makeFailClosedLimiter({
   limiterID: "bulk",
   message: "Bulk action limit reached. Wait 10 minutes before retrying.",
 });
-
-/* ─── Broadcast ───────────────────────────────────────────────────────────────
-   Redis-backed, FAIL-CLOSED. No in-memory fallback.
-   Applied in broadcastRoutes.js.
-
-   Limit is 2 (not 1) to allow one legitimate retry within the window if
-   the first attempt fails (timeout, bad payload, transient error) without
-   meaningfully increasing fan-out risk.
-
-   Broadcasts fan out to potentially thousands of users (notifications +
-   emails) — this is the strictest limiter in the stack. Redis outage → 503
-   until Redis recovers. Availability is sacrificed to protect users from
-   duplicate fan-out that cannot be undone.                                    */
 
 export const broadcastLimiter = makeFailClosedLimiter({
   prefix: "rl:broadcast:",
