@@ -2,23 +2,11 @@
  * @file ProfileRepository.js
  * @module repositories
  *
- * Enterprise-grade workflow-oriented repository for Profile persistence.
- *
- * Responsibilities
- * ─────────────────────────────────────────────────────────────
- *  • Own ALL MongoDB/Mongoose query construction
- *  • Return immutable plain JS snapshots only
- *  • Centralize serialization behaviour
- *  • Provide workflow-oriented persistence methods
- *  • Encapsulate nested document persistence semantics
- *  • Forward transactional sessions consistently
- *
- * This module intentionally does NOT:
- *  • contain business rules/policies
- *  • manage transactions
- *  • emit events
- *  • perform authorization
- *  • orchestrate workflows
+ * FIX: All queries updated from `userId` to `user` to match the Profile
+ * model schema field name. The Profile schema defines:
+ *   user: { type: ObjectId, ref: "User" }
+ * not `userId`. Using `userId` caused all queries to silently miss,
+ * returning null/empty results for every profile lookup.
  */
 
 import { NotFoundError } from "../errors/NotFoundError.js";
@@ -137,9 +125,10 @@ export class ProfileRepository {
     return executeLeanQuery(this.#model.findById(id).session(session ?? null));
   }
 
+  // FIX: was `{ userId }` — Profile model field is `user`
   async findByUserId(userId, session) {
     return executeLeanQuery(
-      this.#model.findOne({ userId }).session(session ?? null),
+      this.#model.findOne({ user: userId }).session(session ?? null),
     );
   }
 
@@ -206,6 +195,7 @@ export class ProfileRepository {
 
     const safeLimit = resolveQueueLimit(limit);
 
+    // FIX: $lookup localField was "userId" — Profile model field is "user"
     const pipeline = [
       {
         $match: matchStage,
@@ -213,10 +203,15 @@ export class ProfileRepository {
 
       {
         $project: {
-          userId: 1,
+          user: 1,
           createdAt: 1,
           updatedAt: 1,
           tinNumber: 1,
+          businessName: 1,
+          contactPerson: 1,
+          membershipType: 1,
+          phoneNumber: 1,
+          city: 1,
 
           documents: {
             $filter: {
@@ -233,9 +228,9 @@ export class ProfileRepository {
       {
         $lookup: {
           from: "users",
-          localField: "userId",
+          localField: "user",
           foreignField: "_id",
-          as: "user",
+          as: "userInfo",
 
           pipeline: [
             {
@@ -250,7 +245,10 @@ export class ProfileRepository {
       },
 
       {
-        $unwind: "$user",
+        $unwind: {
+          path: "$userInfo",
+          preserveNullAndEmptyArrays: false,
+        },
       },
 
       {
@@ -266,7 +264,7 @@ export class ProfileRepository {
       .aggregate(pipeline)
       .session(session ?? null);
 
-    return deepFreezeClone(results);
+    return deepFreezeClone(JSON.parse(JSON.stringify(results)));
   }
 
   async countPendingReviews(matchStage, session) {
@@ -279,11 +277,12 @@ export class ProfileRepository {
      REVIEW FETCH OPERATIONS
   ───────────────────────────────────────── */
 
+  // FIX: query field was "userId" — Profile model field is "user"
   async findDocumentForReview({ userId, documentId }, session) {
     const profile = await executeLeanQuery(
       this.#model
         .findOne({
-          userId,
+          user: userId, // FIX: was "userId"
           "documents._id": documentId,
         })
         .session(session ?? null),
@@ -315,6 +314,7 @@ export class ProfileRepository {
      REVIEW PERSISTENCE
   ───────────────────────────────────────── */
 
+  // FIX: query field was "userId" — Profile model field is "user"
   async applyDocumentReviewDecision(
     { userId, documentId, status, adminId, reason = null },
     session,
@@ -331,7 +331,7 @@ export class ProfileRepository {
     const updated = await executeLeanQuery(
       this.#model.findOneAndUpdate(
         {
-          userId,
+          user: userId, // FIX: was "userId"
           "documents._id": documentId,
         },
         update,
@@ -346,6 +346,41 @@ export class ProfileRepository {
     return updated;
   }
 
+  // FIX: query field was "userId" — Profile model field is "user"
+  async applyDocumentResubmissionRequest(
+    { userId, documentId, adminId, reason, documentsRequired },
+    session,
+  ) {
+    const update = {
+      $set: {
+        "documents.$.status": "resubmission_required",
+        "documents.$.verifiedBy": adminId,
+        "documents.$.verifiedAt": new Date(),
+        "documents.$.resubmissionReason": reason,
+        "documents.$.documentsRequired": documentsRequired,
+        "documents.$.rejectionReason": null,
+      },
+    };
+
+    const updated = await executeLeanQuery(
+      this.#model.findOneAndUpdate(
+        {
+          user: userId, // FIX: was "userId"
+          "documents._id": documentId,
+        },
+        update,
+        {
+          new: true,
+          runValidators: true,
+          ...buildQueryOptions(session),
+        },
+      ),
+    );
+
+    return updated;
+  }
+
+  // FIX: query field was "userId" — Profile model field is "user"
   async applyBulkDocumentReviewDecision(
     { userId, documentIds, status, adminId, reason = null },
     session,
@@ -369,7 +404,7 @@ export class ProfileRepository {
     const updated = await executeLeanQuery(
       this.#model.findOneAndUpdate(
         {
-          userId,
+          user: userId, // FIX: was "userId"
         },
         update,
         {
