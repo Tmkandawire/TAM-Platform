@@ -31,10 +31,13 @@ const userSchema = new mongoose.Schema(
 
     status: {
       type: String,
+      // "pending"   — newly registered, awaiting admin review.
+      // "active"    — approved, full access granted.
       // "rejected"  — application reviewed and denied at onboarding.
       //               Distinct from "suspended" (previously active, access revoked).
       //               Kept separate to support reporting, reapplication flows,
       //               and notification routing without ambiguity.
+      // "suspended" — previously active, access revoked by admin.
       enum: ["pending", "active", "suspended", "rejected"],
       default: "pending",
       index: true,
@@ -84,6 +87,16 @@ const userSchema = new mongoose.Schema(
 
     // Audit
     lastLoginAt: Date,
+
+    // Communication preferences
+    // documentUpdates + accountAlerts default true — members must receive
+    // KYC decisions and account status changes by default.
+    // broadcasts defaults false — TAM announcements are opt-in.
+    notificationPreferences: {
+      documentUpdates: { type: Boolean, default: true },
+      accountAlerts: { type: Boolean, default: true },
+      broadcasts: { type: Boolean, default: false },
+    },
 
     isDeleted: {
       type: Boolean,
