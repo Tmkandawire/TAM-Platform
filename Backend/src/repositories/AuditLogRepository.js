@@ -403,6 +403,57 @@ export class AuditLogRepository {
     );
   }
 
+  /**
+   * Finds audit log entries matching an arbitrary filter object.
+   *
+   * Intended for multi-field queries from the service layer where
+   * single-concern methods (findByActor, findByDateRange) are insufficient.
+   * The filter object is passed directly to Mongoose — callers are
+   * responsible for constructing valid query shapes.
+   *
+   * Results are sorted newest-first.
+   *
+   * @param {Object} params
+   * @param {Object} params.filter   - Mongoose-compatible filter object.
+   * @param {number} [params.skip=0]
+   * @param {number} [params.limit]
+   * @param {import("mongoose").ClientSession} [session]
+   * @returns {Promise<Readonly<Object[]>>}
+   */
+  async findWithFilter({ filter = {}, skip = 0, limit, sort }, session) {
+    assertPlainObject(filter, "filter");
+    assertValidPagination(skip, limit);
+
+    // Default to createdAt DESC if no sort is supplied.
+    // Explicit sort from the service takes precedence.
+    const sortStage = sort?.field
+      ? { [sort.field]: sort.direction }
+      : { createdAt: -1 };
+
+    return executeLeanQuery(
+      this.#model
+        .find(filter)
+        .sort(sortStage)
+        .skip(skip)
+        .limit(resolveLimit(limit))
+        .session(session ?? null),
+    );
+  }
+
+  /**
+   * Counts audit log entries matching an arbitrary filter object.
+   * Paired with findWithFilter for paginated list responses.
+   *
+   * @param {Object} filter  - Mongoose-compatible filter object.
+   * @param {import("mongoose").ClientSession} [session]
+   * @returns {Promise<number>}
+   */
+  async countWithFilter(filter = {}, session) {
+    assertPlainObject(filter, "filter");
+
+    return this.#model.countDocuments(filter).session(session ?? null);
+  }
+
   /* ─── Writes ────────────────────────────────────────────────────────────── */
 
   /**
@@ -432,6 +483,32 @@ export class AuditLogRepository {
     // toObject() with LEAN_OPTIONS matches the shape produced by all read
     // paths via executeLeanQuery — consistent field shape on every exit.
     return deepFreezeClone(created.toObject(LEAN_OPTIONS));
+  }
+
+  /**
+   * Creates multiple audit log entries in a single operation.
+   *
+   * Used by bulk review workflows where N documents are reviewed in one
+   * transaction and each needs its own audit entry. All entries are
+   * inserted atomically within the supplied session.
+   *
+   * @param {Object[]} entries  - Array of audit log data objects.
+   * @param {import("mongoose").ClientSession} [session]
+   * @returns {Promise<Readonly<Object[]>>}
+   */
+  async createMany(entries, session) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw new RangeError(
+        "AuditLogRepository: `createMany` requires a non-empty array.",
+      );
+    }
+
+    const created = await this.#model.create(
+      entries,
+      buildQueryOptions(session),
+    );
+
+    return deepFreezeClone(created.map((doc) => doc.toObject(LEAN_OPTIONS)));
   }
 }
 
