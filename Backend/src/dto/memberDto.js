@@ -16,10 +16,11 @@ const MW_PHONE_REGEX = /^(?:\+265|0)[89]\d{8}$/;
 const CITIES = ["Blantyre", "Lilongwe", "Mzuzu", "Zomba", "Other"];
 const VEHICLE_TYPES = ["Truck", "Tanker", "Van", "Minibus", "Other"];
 const DOCUMENT_TYPES = [
-  "BusinessLicense",
-  "Bluebook",
-  "IdentityProof",
-  "Other",
+  "nationalId",
+  "passport",
+  "utilityBill",
+  "businessCert",
+  "tinCertificate",
 ];
 const MEMBERSHIP_TYPES = ["Small Scale", "Medium Scale", "Corporate"];
 
