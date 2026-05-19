@@ -35,19 +35,26 @@ export const CLOUDINARY_BASE_FOLDER =
   process.env.NODE_ENV === "production" ? "tam-platform" : "tam-platform-dev";
 
 /* -------------------------
-   STORAGE ENGINE SETUP (THE MISSING PIECE)
+   STORAGE ENGINE
 ------------------------- */
 export const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: async (req, file) => {
-    // Falls back to 'anonymous' if no user is found
     const userId = req.user?.id || "anonymous";
+
+    // Determine resource_type explicitly based on MIME type.
+    // "auto" causes Cloudinary to classify PDFs as "raw", which generates
+    // authenticated-only URLs. Setting "image" for images and "raw" for
+    // PDFs with upload type "upload" ensures all files get public URLs.
+    const isPdf = file.mimetype === "application/pdf";
 
     return {
       folder: `${CLOUDINARY_BASE_FOLDER}/users/${userId}`,
-      resource_type: "auto", // Automatically handles PDFs and Images
-      allowed_formats: ["jpg", "jpeg", "png", "pdf"],
+      resource_type: "image",
+      type: "upload",
+      allowed_formats: isPdf ? ["pdf"] : ["jpg", "jpeg", "png"],
       public_id: `${file.fieldname}_${Date.now()}`,
+      format: isPdf ? "pdf" : undefined,
     };
   },
 });
@@ -68,6 +75,5 @@ if (process.env.NODE_ENV !== "test") {
   verifyCloudinary();
 }
 
-// Named export for storage and default export for cloudinary SDK
 export { cloudinary };
 export default cloudinary;
