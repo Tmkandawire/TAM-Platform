@@ -58,6 +58,7 @@ import ApiResponse from "../utils/apiResponse.js";
 import adminDocumentService from "../services/adminDocumentService.js";
 import { ValidationError } from "../errors/index.js";
 import { adminBulkActionSchema } from "../dto/adminBulkActionDto.js";
+import { parseDto } from "../utils/parseDto.js";
 
 /* ─────────────────────────────────────────────
    CONSTANTS
@@ -459,27 +460,12 @@ export const bulkReviewDocuments = asyncHandler(async (req, res) => {
   // adminBulkActionSchema validates action, documents array (including
   // per-item ObjectId format and deduplication), and the conditional
   // reason requirement for rejections.
-  const parsed = adminBulkActionSchema.safeParse(req.body);
-
-  if (!parsed.success) {
-    // Map Zod issues to the platform's typed ValidationError.
-    // The first issue is used as the primary message; all issues are
-    // forwarded in the errors array so clients can surface every problem
-    // in a single round trip.
-    const issues = parsed.error.issues;
-
-    throw ValidationError.dto(
-      issues[0]?.path?.join(".") ?? "body",
-      issues[0]?.message ?? "Invalid request body.",
-      "INVALID_BULK_PAYLOAD",
-      issues.map((issue) => ({
-        field: issue.path.join("."),
-        message: issue.message,
-      })),
-    );
-  }
-
-  const { action, documents, reason } = parsed.data;
+  // parseDto maps Zod errors to ValidationError and throws, preventing
+  // the service from receiving invalid input.
+  const { action, documents, reason } = parseDto(
+    adminBulkActionSchema.safeParse(req.body),
+    "body",
+  );
 
   // ── Service delegation ────────────────────────────────────────────────
   // The service processes each document independently inside per-user
