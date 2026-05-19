@@ -2,16 +2,22 @@ import ApiError from "../utils/ApiError.js";
 import logger from "../utils/logger.js";
 
 /**
- * Enterprise-grade validation middleware
- * Supports body, params, query simultaneously
+ * @file middleware/validateMiddleware.js
+ *
+ * Zod validation middleware.
+ *
+ * Passes req.body directly to the schema so flat schemas (profileSchema,
+ * updateProfileSchema, etc.) receive the fields they expect without needing
+ * to wrap under a `body` key.
+ *
+ * If your schema intentionally validates params or query alongside body,
+ * pass a schema that accepts { body, params, query } and this middleware
+ * will still work — just ensure the schema does not use .strict() at the
+ * top level or it will reject the extra keys.
  */
 export const validate = (schema) => (req, res, next) => {
   try {
-    const result = schema.safeParse({
-      body: req.body,
-      params: req.params,
-      query: req.query,
-    });
+    const result = schema.safeParse(req.body);
 
     if (!result.success) {
       const formattedErrors = result.error.issues.map((err) => ({
@@ -35,10 +41,8 @@ export const validate = (schema) => (req, res, next) => {
       );
     }
 
-    // ✅ Replace request data with sanitized values
-    if (result.data.body) req.body = result.data.body;
-    if (result.data.params) req.params = result.data.params;
-    if (result.data.query) req.query = result.data.query;
+    // Replace req.body with the sanitized + transformed values from Zod
+    req.body = result.data;
 
     next();
   } catch (err) {
