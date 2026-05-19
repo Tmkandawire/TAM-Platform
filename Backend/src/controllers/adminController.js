@@ -237,3 +237,57 @@ export const suspendMember = asyncHandler(async (req, res) => {
   const response = ApiResponse.ok(null, "Member suspended successfully.");
   return res.status(response.statusCode).json(response);
 });
+
+export const approveDocument = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.userId, "userId");
+  assertValidObjectId(req.params.docId, "docId");
+
+  await adminService.approveDocument(
+    req.params.userId,
+    req.params.docId,
+    req.user.id,
+    buildReqInfo(req),
+  );
+
+  const response = ApiResponse.ok(null, "Document approved successfully.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const rejectDocument = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.userId, "userId");
+  assertValidObjectId(req.params.docId, "docId");
+
+  const { reason } = req.body;
+  assertValidReason(reason);
+
+  await adminService.rejectDocument(
+    req.params.userId,
+    req.params.docId,
+    reason.trim(),
+    req.user.id,
+    buildReqInfo(req),
+  );
+
+  const response = ApiResponse.ok(null, "Document rejected successfully.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const requestResubmission = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.userId, "userId");
+  assertValidObjectId(req.params.docId, "docId");
+
+  const { reason, documentsRequired } = req.body;
+  assertValidReason(reason);
+
+  await adminService.requestDocumentResubmission(
+    req.params.userId,
+    req.params.docId,
+    reason.trim(),
+    documentsRequired ?? [],
+    req.user.id,
+    buildReqInfo(req),
+  );
+
+  const response = ApiResponse.ok(null, "Resubmission requested.");
+  return res.status(response.statusCode).json(response);
+});
