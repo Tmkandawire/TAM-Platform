@@ -91,7 +91,13 @@ const documentSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected", "expired"],
+      enum: [
+        "pending",
+        "approved",
+        "rejected",
+        "expired",
+        "resubmission_required",
+      ],
       default: "pending",
       index: true,
     },
@@ -99,6 +105,33 @@ const documentSchema = new mongoose.Schema(
     rejectionReason: {
       type: String,
       default: null,
+    },
+
+    // Set when admin requests resubmission — cleared when member resubmits.
+    // Parallel to rejectionReason but semantically distinct:
+    // rejectionReason = terminal denial; resubmissionReason = fixable, member can act.
+    resubmissionReason: {
+      type: String,
+      default: null,
+    },
+
+    // The specific document types the admin flagged for resubmission.
+    // Drives the member-facing UI so they know exactly what to re-upload
+    // rather than guessing. Cleared when the member resubmits.
+    documentsRequired: {
+      type: [
+        {
+          type: String,
+          enum: [
+            "nationalId",
+            "passport",
+            "utilityBill",
+            "businessCert",
+            "tinCertificate",
+          ],
+        },
+      ],
+      default: [],
     },
 
     verifiedBy: {
@@ -122,6 +155,28 @@ const profileSchema = new mongoose.Schema(
       required: true,
       unique: true,
       index: true,
+    },
+
+    businessName: { type: String, trim: true },
+    registrationNumber: { type: String, trim: true },
+    taxId: { type: String, trim: true },
+    membershipType: {
+      type: String,
+      enum: ["Small Scale", "Medium Scale", "Corporate"],
+    },
+    contactPerson: { type: String, trim: true },
+    phoneNumber: { type: String, trim: true },
+    physicalAddress: { type: String, trim: true },
+    city: {
+      type: String,
+      enum: ["Blantyre", "Lilongwe", "Mzuzu", "Zomba", "Other"],
+    },
+    fleetSize: { type: Number, min: 0 },
+    vehicleTypes: {
+      type: [
+        { type: String, enum: ["Truck", "Tanker", "Van", "Minibus", "Other"] },
+      ],
+      default: [],
     },
 
     tinNumber: {
@@ -192,6 +247,8 @@ profileSchema.methods.upsertDocument = function (newDoc) {
       ...newDoc,
       status: "pending",
       rejectionReason: null,
+      resubmissionReason: null,
+      documentsRequired: [],
       verifiedAt: null,
       verifiedBy: null,
       uploadedAt: new Date(),
