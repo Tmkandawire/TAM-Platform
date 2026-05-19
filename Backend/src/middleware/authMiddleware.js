@@ -1,19 +1,10 @@
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiError from "../utils/ApiError.js";
 import User from "../models/User.js";
 
-/**
- * Protect routes using Access Token.
- * - Stateless verification
- * - Minimal DB lookup
- * - High performance
- *
- * authorize(), denyRoles(), scopeGuard(), atLeastRole()
- * all live in middleware/authorize.js — import from there.
- */
 export const protect = asyncHandler(async (req, res, next) => {
-  // Guard: fail immediately if secret is not configured
   if (!process.env.JWT_ACCESS_SECRET) {
     throw new ApiError(
       500,
@@ -25,7 +16,6 @@ export const protect = asyncHandler(async (req, res, next) => {
 
   let token;
 
-  // 1. Extract token (cookie OR header)
   if (req.cookies?.accessToken) {
     token = req.cookies.accessToken;
   } else if (req.headers.authorization?.startsWith("Bearer")) {
@@ -37,38 +27,54 @@ export const protect = asyncHandler(async (req, res, next) => {
   }
 
   let decoded;
-
-  // 2. Verify JWT
   try {
     decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
   } catch {
     throw new ApiError(401, "Invalid or expired token", [], "INVALID_TOKEN");
   }
 
-  // 3. Validate token type
   if (decoded.type !== "access") {
     throw new ApiError(401, "Invalid token type", [], "INVALID_TOKEN_TYPE");
   }
 
-  // 4. Fetch user (lean for performance)
-  // isDeleted selected as defense-in-depth — pre-find hook excludes deleted
-  // users globally, but this guards against future hook weakening
-  const user = await User.findById(decoded.id)
-    .select("role status isDeleted")
-    .lean();
+  if (!decoded.id || !mongoose.Types.ObjectId.isValid(decoded.id)) {
+    throw new ApiError(401, "Invalid token payload", [], "INVALID_TOKEN");
+  }
+
+  let user;
+  try {
+    user = await User.findById(decoded.id)
+      .select("email role status isDeleted")
+      .lean();
+  } catch (err) {
+    if (err.name === "CastError") {
+      throw new ApiError(401, "Invalid token payload", [], "INVALID_TOKEN");
+    }
+    throw err;
+  }
 
   if (!user || user.isDeleted) {
     throw new ApiError(401, "User not found", [], "USER_NOT_FOUND");
   }
 
-  if (user.status !== "active") {
-    throw new ApiError(403, "Account inactive", [], "ACCOUNT_INACTIVE");
+  // Only hard-block suspended or rejected accounts.
+  // "pending" members are allowed through — they need access to complete
+  // their profile, upload documents, and submit for verification.
+  // Individual routes/controllers enforce what pending members can and
+  // cannot do beyond that.
+  if (user.status === "suspended") {
+    throw new ApiError(403, "Account suspended", [], "ACCOUNT_SUSPENDED");
   }
 
-  // 5. Attach minimal user context
+  if (user.status === "rejected") {
+    throw new ApiError(403, "Account rejected", [], "ACCOUNT_REJECTED");
+  }
+
   req.user = {
     id: user._id,
     role: user.role,
+    status: user.status,
+    email: user.email,
   };
 
   next();
