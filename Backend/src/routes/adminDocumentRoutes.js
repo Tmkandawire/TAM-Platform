@@ -8,11 +8,14 @@ import {
   getPendingDocuments,
   approveDocument,
   rejectDocument,
+  bulkReviewDocuments,
+  requestResubmission,
 } from "../controllers/adminDocumentController.js";
 
 import {
   approveDocumentSchema,
   rejectDocumentSchema,
+  requestResubmissionSchema,
   pendingQuerySchema,
 } from "../dto/adminDocumentDto.js";
 
@@ -22,27 +25,31 @@ const router = express.Router();
 router.use(protect);
 router.use(authorize("admin"));
 
-/* QUEUE */
+/* QUEUE
+ * Mounted at /admin/documents in routes/index.js.
+ * Frontend calls GET /admin/documents — so the queue handler lives at /
+ * not /pending. /pending would make the full path /admin/documents/pending
+ * which no frontend call uses.
+ */
 router.get(
-  "/pending",
+  "/",
   adminActionLimiter,
   validate(pendingQuerySchema, "query"),
   getPendingDocuments,
 );
 
 /* ACTIONS */
-router.patch(
-  "/:userId/:docId/approve",
-  adminActionLimiter,
-  validate(approveDocumentSchema),
-  approveDocument,
-);
+router.patch("/:userId/:docId/approve", adminActionLimiter, approveDocument);
+
+router.patch("/:userId/:docId/reject", adminActionLimiter, rejectDocument);
 
 router.patch(
-  "/:userId/:docId/reject",
+  "/:userId/:docId/request-resubmission",
   adminActionLimiter,
-  validate(rejectDocumentSchema),
-  rejectDocument,
+  requestResubmission,
 );
+
+/* BULK */
+router.post("/bulk-review", adminActionLimiter, bulkReviewDocuments);
 
 export default router;
