@@ -38,8 +38,9 @@
  *   allowed next statuses
  */
 const ALLOWED_TRANSITIONS = Object.freeze({
-  pending: Object.freeze(["approved", "rejected"]),
-  rejected: Object.freeze(["approved"]),
+  pending: Object.freeze(["approved", "rejected", "resubmission_required"]),
+  rejected: Object.freeze(["approved", "resubmission_required"]),
+  resubmission_required: Object.freeze(["approved", "rejected"]),
   approved: Object.freeze([]),
 });
 
@@ -53,6 +54,7 @@ export const DOCUMENT_POLICY_ERRORS = Object.freeze({
   INVALID_TRANSITION: "INVALID_TRANSITION",
   DOC_EXPIRED: "DOC_EXPIRED",
   REASON_REQUIRED: "REASON_REQUIRED",
+  DOCUMENTS_REQUIRED: "DOCUMENTS_REQUIRED",
 });
 
 /* ─────────────────────────────────────────────
@@ -124,22 +126,29 @@ function allow() {
 ───────────────────────────────────────────── */
 
 /**
- * Validates whether a document can transition
- * from its current state into the requested state.
+ * Validates whether a resubmission request is legal for a given document.
+ *
+ * Separate from validateTransition intentionally — resubmission has its own
+ * business rules (reason + documentsRequired both mandatory) that would
+ * pollute the general transition validator with resubmission-specific branches.
  *
  * PURE FUNCTION:
  * • deterministic
  * • side-effect free
  * • testable in isolation
  *
- * @param {Object} params
- * @param {Object|null} params.document
- * @param {"approved"|"rejected"} params.targetStatus
- * @param {string|null} [params.reason]
+ * @param {Object}        params
+ * @param {Object|null}   params.document           - The document subdocument.
+ * @param {string|null}   params.reason             - Why resubmission is needed.
+ * @param {string[]}      params.documentsRequired  - Document types to resubmit.
  *
  * @returns {PolicyResult}
  */
-function validateTransition({ document, targetStatus, reason = null }) {
+function validateResubmission({
+  document,
+  reason = null,
+  documentsRequired = [],
+}) {
   /* ─────────────────────────────────────────
      DOCUMENT EXISTENCE
   ───────────────────────────────────────── */
@@ -154,10 +163,10 @@ function validateTransition({ document, targetStatus, reason = null }) {
      IDEMPOTENCY / NO-OP GUARD
   ───────────────────────────────────────── */
 
-  if (currentStatus === targetStatus) {
+  if (currentStatus === "resubmission_required") {
     return deny(
       DOCUMENT_POLICY_ERRORS.NO_OP,
-      `Document is already in "${targetStatus}" status.`,
+      `Document is already in "resubmission_required" status.`,
     );
   }
 
@@ -167,32 +176,32 @@ function validateTransition({ document, targetStatus, reason = null }) {
 
   const allowedTransitions = ALLOWED_TRANSITIONS[currentStatus] || [];
 
-  if (!allowedTransitions.includes(targetStatus)) {
+  if (!allowedTransitions.includes("resubmission_required")) {
     return deny(
       DOCUMENT_POLICY_ERRORS.INVALID_TRANSITION,
-      `Cannot transition from "${currentStatus}" to "${targetStatus}".`,
+      `Cannot request resubmission from "${currentStatus}" status.`,
     );
   }
 
   /* ─────────────────────────────────────────
-     EXPIRY VALIDATION
+     REASON REQUIRED
   ───────────────────────────────────────── */
 
-  if (targetStatus === "approved" && isExpired(document.expiryDate)) {
-    return deny(
-      DOCUMENT_POLICY_ERRORS.DOC_EXPIRED,
-      "Cannot approve an expired document.",
-    );
-  }
-
-  /* ─────────────────────────────────────────
-     REJECTION RULES
-  ───────────────────────────────────────── */
-
-  if (targetStatus === "rejected" && (!reason || !reason.trim())) {
+  if (!reason || !reason.trim()) {
     return deny(
       DOCUMENT_POLICY_ERRORS.REASON_REQUIRED,
-      "Reason is required when rejecting documents.",
+      "Reason is required when requesting resubmission.",
+    );
+  }
+
+  /* ─────────────────────────────────────────
+     DOCUMENTS REQUIRED
+  ───────────────────────────────────────── */
+
+  if (!Array.isArray(documentsRequired) || documentsRequired.length === 0) {
+    return deny(
+      DOCUMENT_POLICY_ERRORS.DOCUMENTS_REQUIRED,
+      "At least one document type must be specified for resubmission.",
     );
   }
 
@@ -207,8 +216,39 @@ function validateTransition({ document, targetStatus, reason = null }) {
    EXPORTS
 ───────────────────────────────────────────── */
 
+function assertReviewAllowed({ document, nextStatus }) {
+  if (!document) {
+    throw new Error("Document not found.");
+  }
+
+  const currentStatus = document.status;
+
+  if (currentStatus === nextStatus) {
+    const err = new Error(`Document is already "${nextStatus}".`);
+    err.code = "NO_OP";
+    throw err;
+  }
+
+  const allowedTransitions = ALLOWED_TRANSITIONS[currentStatus] ?? [];
+
+  if (!allowedTransitions.includes(nextStatus)) {
+    const err = new Error(
+      `Cannot transition document from "${currentStatus}" to "${nextStatus}".`,
+    );
+    err.code = "INVALID_TRANSITION";
+    throw err;
+  }
+
+  if (nextStatus === "approved" && isExpired(document.expiryDate)) {
+    const err = new Error("Cannot approve an expired document.");
+    err.code = "DOC_EXPIRED";
+    throw err;
+  }
+}
+
 const documentStatusPolicy = Object.freeze({
-  validateTransition,
+  assertReviewAllowed,
+  validateResubmission,
   ALLOWED_TRANSITIONS,
 });
 
