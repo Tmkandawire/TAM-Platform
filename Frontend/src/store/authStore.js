@@ -3,71 +3,69 @@ import { create } from "zustand";
 /**
  * Global auth store — Zustand.
  *
- * Responsibilities:
- *  - Hold the current authenticated user object
- *  - Expose login / logout / setUser actions
- *  - Mark hydration complete so ProtectedRoute knows when to trust state
+ * Session lifecycle states
+ * ─────────────────────────
+ *
+ *  isHydrated   isVerified   isAuthenticated   Meaning
+ *  ──────────   ──────────   ───────────────   ───────────────────────────────
+ *  false        false        false             App just mounted, /auth/me pending
+ *  true         false        false             hydrate() called, /auth/me in-flight
+ *  true         true         true              /auth/me succeeded — valid session
+ *  true         true         false             /auth/me returned 401 — no session
+ *
+ * ProtectedRoute must show <PageLoader /> while !isVerified to avoid
+ * redirecting a valid session to /login before /auth/me has resolved.
  *
  * Token strategy — cookie-only:
  *  The backend issues accessToken, refreshToken, and csrfToken as httpOnly
  *  cookies. No token ever touches localStorage or Zustand state. Axios sends
  *  cookies automatically via withCredentials: true. This store holds only
  *  the user object derived from a successful /auth/me response.
- *
- * Server state (profile data, documents) lives in React Query, NOT here.
- * This store only holds the authentication session identity.
  */
 const useAuthStore = create((set) => ({
   user: null,
   isAuthenticated: false,
 
   /**
-   * isHydrated — false until hydrate() is called on app boot.
-   * ProtectedRoute renders <PageLoader /> while this is false to prevent
-   * a flash redirect to /login before we know the session state.
+   * isHydrated — true once hydrate() is called on app boot.
+   * Signals that the app has initialised and useCurrentUser has been triggered.
    */
   isHydrated: false,
 
   /**
+   * isVerified — true once /auth/me has resolved (success or 401).
+   * ProtectedRoute waits for this before making any redirect decisions.
+   * This prevents the back-button / refresh kick-to-login bug.
+   */
+  isVerified: false,
+
+  /**
    * Called after a successful login response.
-   * The accessToken cookie is set by the backend — no token handling needed here.
-   *
-   * @param {object} user - User object returned in the login response body
    */
   login: (user) => {
-    set({ user, isAuthenticated: true });
+    set({ user, isAuthenticated: true, isVerified: true });
   },
 
   /**
    * Called on explicit logout or when the refresh token has expired.
-   * Clears all auth state — the backend clears the cookies server-side.
    */
   logout: () => {
-    set({ user: null, isAuthenticated: false });
+    set({ user: null, isAuthenticated: false, isVerified: true });
   },
 
   /**
-   * Updates the user object in the store.
-   * Used when profile data changes (e.g. after admin activates an account
-   * and the app re-fetches /auth/me to reflect the new status).
-   *
-   * @param {object} user - Updated user object
+   * Called by useCurrentUser once /auth/me resolves successfully.
+   * Sets isAuthenticated: true and marks the session as verified.
    */
-  setUser: (user) => set({ user }),
+  setUser: (user) => set({ user, isAuthenticated: true, isVerified: true }),
 
   /**
    * Called once on app boot in App.jsx.
-   *
-   * Cookie-only strategy means there is nothing to read from localStorage.
-   * We mark the app as hydrated and set isAuthenticated optimistically —
-   * the /auth/me query (useCurrentUser) fires immediately after and either:
-   *   a) Confirms the session → populates user via setUser
-   *   b) Gets a 401 → triggers logout and clears isAuthenticated
-   *
-   * ProtectedRoute waits for isHydrated before making any redirect decisions.
+   * Marks the app as hydrated — does NOT set isAuthenticated or isVerified.
+   * Both are set only after /auth/me resolves via setUser or logout.
    */
   hydrate: () => {
-    set({ isHydrated: true, isAuthenticated: true });
+    set({ isHydrated: true });
   },
 }));
 
