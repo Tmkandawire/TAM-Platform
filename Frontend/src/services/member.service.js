@@ -77,6 +77,27 @@ const memberService = {
   updateProfile: (data) => api.patch("/members/profile", data),
 
   /**
+   * Upload one document file for the current member.
+   * Sends multipart/form-data with the field name matching the
+   * multer DOCUMENT_FIELDS config in cloudinaryUploadMiddleware.js.
+   *
+   * @param {{ documentType: string, file: File, title: string }} params
+   *   documentType — one of: nationalId | passport | utilityBill |
+   *                          businessCert | tinCertificate
+   *   file         — the File object from the input
+   *   title        — human-readable label stored with the document
+   * @returns {Promise<ApiResponse<Profile>>}
+   */
+  uploadDocuments: ({ documentType, file, title }) => {
+    const formData = new FormData();
+    formData.append(documentType, file); // field name multer expects
+    formData.append("title", title);
+    return api.post("/members/documents", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+
+  /**
    * Submit the completed profile for TAM secretariat review.
    * Requires isComplete === true and at least one document uploaded.
    * Blocked with 400 if already approved.
