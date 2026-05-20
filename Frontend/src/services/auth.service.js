@@ -42,6 +42,27 @@ const authService = {
    * Log out — instructs the backend to clear all auth cookies.
    */
   logout: () => api.post("/auth/logout"),
+
+  /**
+   * Submit the onboarding form — creates the member profile and uploads
+   * KYC documents in a single request.
+   *
+   * Expects a FormData object containing:
+   *  - Profile fields: businessName, registrationNumber, taxId,
+   *    membershipType, contactPerson, phoneNumber, physicalAddress,
+   *    city, fleetSize, vehicleTypes[]
+   *  - Document files: nationalId, businessCert, and optionally
+   *    tinCertificate, utilityBill, passport
+   *
+   * Content-Type is left unset so Axios sets multipart/form-data with
+   * the correct boundary automatically.
+   *
+   * @param {FormData} formData
+   */
+  completeOnboarding: (formData) =>
+    api.post("/auth/onboarding/complete", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
 };
 
 export default authService;
