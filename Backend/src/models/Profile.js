@@ -179,6 +179,17 @@ const profileSchema = new mongoose.Schema(
       default: [],
     },
 
+    profilePicture: {
+      type: String,
+      default: null,
+      match: [/^https?:\/\/.+/, "Invalid profile picture URL"],
+    },
+
+    profilePicturePublicId: {
+      type: String,
+      default: null,
+    },
+
     tinNumber: {
       type: String,
       trim: true,
@@ -197,7 +208,7 @@ const profileSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
+    toJSON: { virtuals: true, transform: false },
     toObject: { virtuals: true },
   },
 );
@@ -256,6 +267,26 @@ profileSchema.methods.upsertDocument = function (newDoc) {
   } else {
     this.documents.push(newDoc);
   }
+};
+
+profileSchema.methods.toJSON = function () {
+  const obj = this.toObject({
+    virtuals: true,
+  });
+
+  // Internal profile fields
+  delete obj.profilePicturePublicId;
+  delete obj.isDeleted;
+
+  // Strip internal Cloudinary IDs from documents
+  if (Array.isArray(obj.documents)) {
+    obj.documents = obj.documents.map((doc) => {
+      delete doc.publicId;
+      return doc;
+    });
+  }
+
+  return obj;
 };
 
 const Profile = mongoose.model("Profile", profileSchema);
