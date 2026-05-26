@@ -66,6 +66,21 @@ const LEAN_OPTIONS = Object.freeze({
   versionKey: false,
 });
 
+/**
+ * ObjectId fields that must be serialized to hex strings on every document.
+ *
+ * structuredClone (used inside deepFreezeClone) strips the Mongoose ObjectId
+ * prototype, leaving raw { buffer: { 0: n, 1: n, ... } } objects.  These
+ * fields are explicitly converted to 24-char hex strings before freezing so
+ * callers always receive plain strings — never buffer objects.
+ */
+const OBJECT_ID_FIELDS = Object.freeze([
+  "_id",
+  "actorId",
+  "targetId",
+  "documentId",
+]);
+
 /* ─────────────────────────────────────────────
    INTERNAL HELPERS
 ───────────────────────────────────────────── */
@@ -177,6 +192,68 @@ function resolveLimit(limit) {
 }
 
 /**
+ * Converts a single ObjectId value to a 24-char hex string.
+ *
+ * Handles all shapes that Mongoose ObjectIds can take after lean() +
+ * structuredClone():
+ *
+ *  • Already a string          → returned as-is
+ *  • Mongoose ObjectId object  → .toString() produces the hex string
+ *  • structuredClone'd buffer  → { buffer: { 0: n, 1: n, ... } }
+ *                                 12 bytes → joined as 2-char hex pairs
+ *  • null / undefined          → returned as-is (field is optional)
+ *
+ * @param {unknown} val
+ * @returns {string | null | undefined}
+ */
+function idToString(val) {
+  if (val == null) return val;
+  if (typeof val === "string") return val;
+
+  // Mongoose ObjectId — has a working toString() before structuredClone strips it
+  if (typeof val.toString === "function") {
+    const s = val.toString();
+    if (s !== "[object Object]") return s;
+  }
+
+  // structuredClone'd buffer object: { buffer: { 0: 106, 1: 12, ... } }
+  if (val.buffer && typeof val.buffer === "object") {
+    const bytes = Object.values(val.buffer);
+    if (bytes.length === 12) {
+      return bytes.map((b) => Number(b).toString(16).padStart(2, "0")).join("");
+    }
+  }
+
+  // id property (some ObjectId serializations)
+  if (val.id) return String(val.id);
+
+  return null;
+}
+
+/**
+ * Normalizes all ObjectId fields on a single document to plain hex strings.
+ *
+ * Called before deepFreezeClone so the frozen object always contains
+ * strings — never buffer objects or Mongoose ObjectId instances.
+ *
+ * @param {Object | null} doc
+ * @returns {Object | null}
+ */
+function serializeIds(doc) {
+  if (!doc || typeof doc !== "object") return doc;
+
+  const result = { ...doc };
+
+  for (const field of OBJECT_ID_FIELDS) {
+    if (field in result) {
+      result[field] = idToString(result[field]) ?? null;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Deep-clones and recursively freezes `value` into an immutable snapshot.
  *
  * Uses `structuredClone` for the clone step — it correctly handles nested
@@ -202,6 +279,10 @@ function deepFreezeClone(value) {
       return;
     }
 
+    if (ArrayBuffer.isView(obj)) {
+      return;
+    }
+
     Object.freeze(obj);
 
     for (const nested of Object.values(obj)) {
@@ -219,6 +300,7 @@ function deepFreezeClone(value) {
  *
  * Centralising execution guarantees:
  *  • lean reads with consistent LEAN_OPTIONS on every path
+ *  • ObjectId fields serialized to hex strings via serializeIds
  *  • immutable, cloned return values via deepFreezeClone
  *  • no raw Mongoose documents ever reaching the service layer
  *
@@ -229,7 +311,11 @@ function deepFreezeClone(value) {
 async function executeLeanQuery(query) {
   const result = await query.lean(LEAN_OPTIONS).exec();
 
-  return deepFreezeClone(result);
+  if (Array.isArray(result)) {
+    return deepFreezeClone(result.map(serializeIds));
+  }
+
+  return deepFreezeClone(serializeIds(result));
 }
 
 /* ─────────────────────────────────────────────
@@ -482,7 +568,8 @@ export class AuditLogRepository {
 
     // toObject() with LEAN_OPTIONS matches the shape produced by all read
     // paths via executeLeanQuery — consistent field shape on every exit.
-    return deepFreezeClone(created.toObject(LEAN_OPTIONS));
+    // serializeIds ensures ObjectId fields are plain hex strings.
+    return deepFreezeClone(serializeIds(created.toObject(LEAN_OPTIONS)));
   }
 
   /**
@@ -503,12 +590,14 @@ export class AuditLogRepository {
       );
     }
 
-    const created = await this.#model.create(
-      entries,
-      buildQueryOptions(session),
-    );
+    const created = await this.#model.create(entries, {
+      ...buildQueryOptions(session),
+      ordered: true,
+    });
 
-    return deepFreezeClone(created.map((doc) => doc.toObject(LEAN_OPTIONS)));
+    return deepFreezeClone(
+      created.map((doc) => serializeIds(doc.toObject(LEAN_OPTIONS))),
+    );
   }
 }
 
