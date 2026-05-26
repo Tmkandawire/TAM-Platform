@@ -6,7 +6,9 @@ import memberService from "../services/memberService.js";
 import logger from "../utils/logger.js";
 import crypto from "crypto";
 import ms from "ms";
-
+import { buildPasswordResetEmail } from "../email/factories/emailFactory.js";
+import User from "../models/User.js";
+import emailService from "../email/emailService.js";
 /* ─────────────────────────────────────────────
    COOKIE OPTION FACTORIES
 ───────────────────────────────────────────── */
@@ -105,6 +107,13 @@ export const register = asyncHandler(async (req, res) => {
 
   const csrfToken = crypto.randomBytes(32).toString("hex");
 
+  const safeUser = {
+    id: user._id,
+    email: user.email,
+    role: user.role,
+    status: user.status,
+  };
+
   logger.info("User registered and session created", {
     userId: user._id ?? user.id,
     ip: req.ip,
@@ -112,7 +121,10 @@ export const register = asyncHandler(async (req, res) => {
     requestId: req.context?.requestId,
   });
 
-  const response = ApiResponse.created(user, "Account created successfully.");
+  const response = ApiResponse.created(
+    safeUser,
+    "Account created successfully.",
+  );
 
   return setAuthCookies(res, { accessToken, refreshToken, csrfToken })
     .status(response.statusCode)
@@ -134,6 +146,13 @@ export const login = asyncHandler(async (req, res) => {
 
   const csrfToken = crypto.randomBytes(32).toString("hex");
 
+  const safeUser = {
+    id: user._id,
+    email: user.email,
+    role: user.role,
+    status: user.status,
+  };
+
   logger.info("User login successful", {
     userId: user._id ?? user.id,
     ip: req.ip,
@@ -141,7 +160,7 @@ export const login = asyncHandler(async (req, res) => {
     requestId: req.context?.requestId,
   });
 
-  const response = ApiResponse.ok(user, "Login successful.");
+  const response = ApiResponse.ok(safeUser, "Login successful.");
 
   return setAuthCookies(res, { accessToken, refreshToken, csrfToken })
     .status(response.statusCode)
@@ -347,4 +366,129 @@ export const completeOnboarding = asyncHandler(async (req, res) => {
   );
 
   return res.status(response.statusCode).json(response);
+});
+
+// ____ FORGOT PASSWORD & RESET PASSWORD ______________________________________
+
+/**
+ * POST /api/v1/auth/forgot-password
+ * Accepts { email } — always responds 200 to prevent user enumeration.
+ */
+export const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || typeof email !== "string") {
+    return res
+      .status(200)
+      .json(
+        ApiResponse.ok(
+          null,
+          "If that email exists, a reset link has been sent.",
+        ),
+      );
+  }
+
+  const user = await User.findOne({ email: email.trim().toLowerCase() }).select(
+    "+passwordResetToken +passwordResetExpires",
+  );
+
+  // Always return 200 — never reveal whether the email exists
+  if (!user || user.isDeleted) {
+    return res
+      .status(200)
+      .json(
+        ApiResponse.ok(
+          null,
+          "If that email exists, a reset link has been sent.",
+        ),
+      );
+  }
+
+  // Generate a secure random token
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(rawToken)
+    .digest("hex");
+
+  user.passwordResetToken = hashedToken;
+  user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  await user.save({ validateBeforeSave: false });
+
+  const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${rawToken}`;
+
+  try {
+    const payload = buildPasswordResetEmail({
+      userEmail: user.email,
+      resetUrl,
+    });
+    await emailService.sendTransactional(payload);
+  } catch (err) {
+    user.passwordResetToken = null;
+    user.passwordResetExpires = null;
+    await user.save({ validateBeforeSave: false });
+    logger.error("forgotPassword: email send failed", { error: err.message });
+    // Fall through — return 200 regardless to prevent enumeration
+  }
+
+  return res
+    .status(200)
+    .json(
+      ApiResponse.ok(null, "If that email exists, a reset link has been sent."),
+    );
+});
+
+/**
+ * POST /api/v1/auth/reset-password
+ * Accepts { token, password }
+ */
+export const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = req.body;
+
+  if (!token || !password) {
+    throw ValidationError.dto(
+      "token",
+      "Token and password are required.",
+      "MISSING_VALUE",
+    );
+  }
+
+  if (password.length < 8) {
+    throw ValidationError.dto(
+      "password",
+      "Password must be at least 8 characters.",
+      "INVALID_VALUE",
+    );
+  }
+
+  // Hash the incoming token to compare against stored hash
+  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+  const user = await User.findOne({
+    passwordResetToken: hashedToken,
+    passwordResetExpires: { $gt: Date.now() },
+  }).select("+password +passwordResetToken +passwordResetExpires");
+
+  if (!user) {
+    throw ValidationError.dto(
+      "token",
+      "Reset token is invalid or has expired.",
+      "INVALID_VALUE",
+    );
+  }
+
+  user.password = password;
+  user.passwordResetToken = null;
+  user.passwordResetExpires = null;
+  user.loginAttempts = 0;
+  user.lockUntil = null;
+  await user.save();
+
+  logger.info("resetPassword: password reset successful", { userId: user._id });
+
+  return res
+    .status(200)
+    .json(
+      ApiResponse.ok(null, "Password reset successfully. You can now log in."),
+    );
 });
