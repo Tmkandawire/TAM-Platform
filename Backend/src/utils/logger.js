@@ -140,6 +140,46 @@ const SERVICE_NAME = process.env.SERVICE_NAME || "tam-backend";
 const LOG_TO_FILE = process.env.LOG_TO_FILE !== "false";
 
 /* ─────────────────────────────────────────────
+   HELPERS
+───────────────────────────────────────────── */
+
+/**
+ * Safely serializes any value to a JSON string, handling circular references
+ * that arise when Node.js internals (Socket, HTTPParser, IncomingMessage, etc.)
+ * are inadvertently attached to error objects and passed to the logger.
+ *
+ * Without this guard, JSON.stringify throws:
+ *   "TypeError: Converting circular structure to JSON"
+ * which crashes the Winston printf formatter and turns every request that
+ * hits this code path into a 500, masking the original error entirely.
+ *
+ * Strategy:
+ *  - Use a WeakSet to track every object reference visited during serialization.
+ *  - Replace any back-reference with the sentinel string "[Circular]".
+ *  - If JSON.stringify still throws for any other reason (e.g. a custom
+ *    toJSON() that throws), fall back to String(value) so logging never
+ *    crashes the request lifecycle.
+ *
+ * @param {unknown} value - The value to serialize.
+ * @returns {string} A JSON string, or a "[Circular]" / String(value) fallback.
+ */
+const safeStringify = (value) => {
+  const seen = new WeakSet();
+  try {
+    return JSON.stringify(value, (_key, val) => {
+      if (typeof val === "object" && val !== null) {
+        if (seen.has(val)) return "[Circular]";
+        seen.add(val);
+      }
+      return val;
+    });
+  } catch {
+    // Last-resort fallback — ensures the logger never throws.
+    return String(value);
+  }
+};
+
+/* ─────────────────────────────────────────────
    FORMATS
 ───────────────────────────────────────────── */
 
@@ -160,6 +200,30 @@ const defaultFields = winston.format((info) => {
 });
 
 /**
+ * Production-only PII redaction.
+ *
+ * Replaces email addresses anywhere in the structured
+ * log payload before JSON serialization.
+ *
+ * This helps reduce accidental exposure of personal
+ * data in log aggregators and external processors.
+ */
+const redactPii = winston.format((info) => {
+  try {
+    const serialized = JSON.stringify(info);
+
+    const redacted = serialized.replace(
+      /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,
+      "[REDACTED_EMAIL]",
+    );
+
+    return JSON.parse(redacted);
+  } catch {
+    return info;
+  }
+});
+
+/**
  * Production format — structured JSON for log aggregator ingestion.
  *
  * Format order matters:
@@ -168,11 +232,16 @@ const defaultFields = winston.format((info) => {
  *  2. defaultFields() — inject service and requestId defaults
  *  3. timestamp()   — add ISO 8601 timestamp
  *  4. json()        — serialize the final info object to JSON
+ *
+ * Note: Winston's built-in json() format uses its own safe serializer
+ * internally, so circular references in production JSON output are already
+ * handled. The safeStringify helper is only needed in the devFormat printf.
  */
 const prodFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   defaultFields(),
   winston.format.timestamp(),
+  redactPii(),
   winston.format.json(),
 );
 
@@ -191,6 +260,10 @@ const prodFormat = winston.format.combine(
  *  3. colorize()    — apply level colours
  *  4. timestamp()   — add human-readable timestamp
  *  5. printf()      — render the final string
+ *
+ * safeStringify is used instead of JSON.stringify in the printf template
+ * to prevent circular-reference crashes when Node.js internals (Socket,
+ * HTTPParser, etc.) are attached to logged error objects.
  */
 const devFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
@@ -207,13 +280,16 @@ const devFormat = winston.format.combine(
     // Context line — service and requestId always shown for traceability
     const context = `\n  service=${service}  requestId=${requestId}`;
 
-    // Structured fields line — only rendered when extra fields exist
+    // Structured fields line — only rendered when extra fields exist.
+    // safeStringify replaces JSON.stringify to handle circular references
+    // in Node.js internal objects (Socket → HTTPParser → Socket, etc.)
+    // that can appear inside error cause chains logged by errorMiddleware.
     const structuredEntries = Object.entries(rest).filter(
       ([, value]) => value !== undefined && value !== null,
     );
     const structured =
       structuredEntries.length > 0
-        ? `\n  ${structuredEntries.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join("  ")}`
+        ? `\n  ${structuredEntries.map(([k, v]) => `${k}=${safeStringify(v)}`).join("  ")}`
         : "";
 
     // Stack trace line — only when an Error was logged
