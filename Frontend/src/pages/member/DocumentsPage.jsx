@@ -1,884 +1,676 @@
 /**
- * @file DocumentsPage.jsx
+ * @file pages/member/DocumentsPage.jsx
  * @module pages/member
  *
- * KYC document management page for authenticated members.
+ * KYC document upload page.
  *
- * Sections:
- *   1. Constants & config
- *   2. Sub-components (DocumentCard, UploadZone, UploadModal)
- *   3. DocumentsPage (root)
+ * Allowed document types (must match cloudinaryUploadMiddleware DOCUMENT_FIELDS
+ * and memberDto DOCUMENT_TYPES exactly):
+ *   nationalId | passport | utilityBill | businessCert | tinCertificate
  *
- * Data flow:
- *   - useCurrentUser  → auth identity
- *   - useQuery        → profile (documents embedded in profile object)
- *   - useMutation     → documentService.uploadDocuments
- *   - queryClient.invalidateQueries → MEMBER_QUERY_KEYS + DOCUMENT_QUERY_KEYS
+ * Upload flow:
+ *  1. Member selects a document type from the dropdown
+ *  2. Member enters a human-readable title (optional — defaults to type label)
+ *  3. Member picks a file (PDF, JPG, PNG — MIME validated client-side)
+ *  4. POST /api/v1/members/documents (multipart/form-data)
+ *     field name = documentType  (e.g. "nationalId")
+ *     field name = "title"
+ *  5. On success → invalidate MEMBER_QUERY_KEYS.profile to refresh document list
  *
- * Business rules enforced in UI:
- *   - Approved members cannot upload new documents (backend also enforces 403)
- *   - Each document type can only be uploaded once; re-upload replaces existing
- *   - Files must be image/* or application/pdf, max 5 MB
- *   - At least one file must be selected before the upload button enables
+ * The page also shows all previously uploaded documents fetched from the
+ * member profile (GET /api/v1/members/me).
  */
 
-import { useState, useRef, useCallback, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { useReducedMotion } from "framer-motion";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { motion, useReducedMotion } from "framer-motion";
+import { toast } from "sonner";
 import {
-  FileText,
   Upload,
+  FileText,
   CheckCircle2,
-  XCircle,
-  Clock,
-  AlertTriangle,
+  AlertCircle,
   RefreshCw,
-  ChevronRight,
-  FileBadge,
-  ShieldCheck,
-  Ban,
   X,
-  Loader2,
-  Info,
-  CloudUpload,
+  FilePlus,
+  ShieldCheck,
+  Paperclip,
+  ExternalLink,
 } from "lucide-react";
-
 import memberService, {
   MEMBER_QUERY_KEYS,
 } from "../../services/member.service.js";
-import documentService, {
-  DOCUMENT_QUERY_KEYS,
-  validateUploadFile,
-} from "../../services/document.service.js";
-import {
-  formatDate,
-  formatRelativeTime,
-  DOCUMENT_TYPE_LABELS,
-  STATUS_CONFIG,
-  ACCOUNT_STATUS_CONFIG,
-} from "../../utils/formatters.js";
+import { formatDate } from "../../utils/formatters.js";
+import { cn } from "../../utils/cn.js";
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   1. CONSTANTS & CONFIG
-───────────────────────────────────────────────────────────────────────────── */
+// ─── Constants — must match DOCUMENT_FIELDS in cloudinaryUploadMiddleware.js ──
 
-/** Ordered list — drives the card grid and upload checklist. */
-const DOCUMENT_TYPES = [
-  "nationalId",
-  "passport",
-  "utilityBill",
-  "businessCert",
-  "tinCertificate",
+const DOC_TYPES = [
+  { value: "nationalId", label: "National ID" },
+  { value: "passport", label: "Passport" },
+  { value: "utilityBill", label: "Utility Bill" },
+  { value: "businessCert", label: "Business Certificate" },
+  { value: "tinCertificate", label: "TIN Certificate" },
 ];
 
-/**
- * Per-document-type metadata: description and what the member should upload.
- * Keeps the UI copy co-located with the constants it describes.
- */
-const DOC_META = {
-  nationalId: {
-    description:
-      "Government-issued national identity card (front & back scan).",
-    icon: FileBadge,
-  },
-  passport: {
-    description: "Valid passport biographical data page.",
-    icon: FileBadge,
-  },
-  utilityBill: {
-    description: "Utility bill or bank statement dated within 3 months.",
-    icon: FileText,
-  },
-  businessCert: {
-    description: "Certificate of incorporation or business registration.",
-    icon: ShieldCheck,
-  },
-  tinCertificate: {
-    description: "Tax Identification Number certificate issued by MRA.",
-    icon: FileBadge,
-  },
+const DOC_TYPE_MAP = Object.fromEntries(
+  DOC_TYPES.map((d) => [d.value, d.label]),
+);
+
+const ACCEPTED_MIME = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+];
+const ACCEPTED_EXTENSIONS = ".pdf,.jpg,.jpeg,.png,.webp";
+const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+// ─── Animation variants ───────────────────────────────────────────────────────
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
+  visible: (i = 0) => ({
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1], delay: i * 0.05 },
+  }),
 };
 
-/** Status icon map — separate from STATUS_CONFIG colour strings. */
-const STATUS_ICON = {
-  pending: Clock,
-  approved: CheckCircle2,
-  rejected: XCircle,
-  expired: AlertTriangle,
+const reducedFade = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0 } },
 };
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   2A. DocumentCard
-   Renders one document type slot: either uploaded (with status) or empty.
-───────────────────────────────────────────────────────────────────────────── */
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
 
-/**
- * @param {{
- *   docType: string,
- *   document: object | null,
- *   isLocked: boolean,
- *   onUploadClick: (docType: string) => void,
- * }} props
- */
-function DocumentCard({ docType, document, isLocked, onUploadClick }) {
-  const label = DOCUMENT_TYPE_LABELS[docType] ?? docType;
-  const meta = DOC_META[docType];
-  const Icon = meta?.icon ?? FileText;
-
-  const uploaded = !!document;
-  const status = document?.status ?? null;
-  const cfg = status ? STATUS_CONFIG[status] : null;
-  const StatusIcon = status ? (STATUS_ICON[status] ?? Clock) : null;
-
+function Skeleton({ className }) {
   return (
-    <div
-      className={[
-        "relative flex flex-col gap-4 rounded-lg border bg-white p-5",
-        "transition-shadow duration-200",
-        uploaded
-          ? "border-gray-200 shadow-sm"
-          : "border-dashed border-gray-300",
-        !uploaded && !isLocked
-          ? "hover:border-tam-red hover:shadow-md cursor-pointer"
-          : "",
-      ].join(" ")}
-      onClick={
-        !uploaded && !isLocked ? () => onUploadClick(docType) : undefined
-      }
-      role={!uploaded && !isLocked ? "button" : undefined}
-      tabIndex={!uploaded && !isLocked ? 0 : undefined}
-      onKeyDown={
-        !uploaded && !isLocked
-          ? (e) => e.key === "Enter" && onUploadClick(docType)
-          : undefined
-      }
-      aria-label={!uploaded && !isLocked ? `Upload ${label}` : undefined}
-    >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-50 border border-gray-200">
-            <Icon size={18} className="text-gray-500" />
-          </span>
-          <div>
-            <p className="text-sm font-semibold text-gray-800 leading-tight">
-              {label}
-            </p>
-            {uploaded && document.uploadedAt && (
-              <p className="text-xs text-gray-400 mt-0.5">
-                Uploaded {formatRelativeTime(document.uploadedAt)}
-              </p>
-            )}
-          </div>
-        </div>
+    <div className={cn("animate-pulse rounded-lg bg-gray-100", className)} />
+  );
+}
 
-        {/* Status badge */}
-        {cfg && StatusIcon && (
-          <span
-            className={[
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-              cfg.color,
-            ].join(" ")}
-          >
-            <StatusIcon size={11} />
-            {cfg.label}
-          </span>
-        )}
-      </div>
-
-      {/* Description */}
-      <p className="text-xs text-gray-500 leading-relaxed">
-        {meta?.description}
-      </p>
-
-      {/* Rejection reason */}
-      {status === "rejected" && document?.rejectionReason && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2.5">
-          <p className="text-xs font-medium text-red-700 mb-0.5">
-            Rejection reason
-          </p>
-          <p className="text-xs text-red-600 leading-relaxed">
-            {document.rejectionReason}
-          </p>
-        </div>
-      )}
-
-      {/* CTA */}
-      <div className="mt-auto pt-1">
-        {isLocked ? (
-          <div className="flex items-center gap-1.5 text-xs text-gray-400">
-            <Ban size={12} />
-            <span>Locked after approval</span>
-          </div>
-        ) : uploaded ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onUploadClick(docType);
-            }}
-            className="flex items-center gap-1.5 text-xs font-medium text-tam-red hover:text-tam-red/80 transition-colors"
-          >
-            <RefreshCw size={12} />
-            Replace document
-          </button>
-        ) : (
-          <div className="flex items-center gap-1.5 text-xs font-medium text-tam-red">
-            <Upload size={12} />
-            Click to upload
-          </div>
-        )}
-      </div>
+function PageSkeleton() {
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <Skeleton className="h-8 w-48" />
+      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-40 rounded-xl" />
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   2B. UploadZone
-   Drag-and-drop file picker for a single document type.
-───────────────────────────────────────────────────────────────────────────── */
+// ─── Field primitives ─────────────────────────────────────────────────────────
 
-/**
- * @param {{
- *   docType: string,
- *   file: File | null,
- *   onFile: (file: File | null) => void,
- *   error: string | null,
- * }} props
- */
-function UploadZone({ docType, file, onFile, error }) {
-  const inputRef = useRef(null);
-  const [dragging, setDragging] = useState(false);
-
-  const label = DOCUMENT_TYPE_LABELS[docType] ?? docType;
-
-  const handleFiles = useCallback(
-    (files) => {
-      const f = files[0];
-      if (!f) return;
-      try {
-        validateUploadFile(docType, f);
-        onFile(f, null);
-      } catch (err) {
-        // validateUploadFile throws with a user-safe message string.
-        // Surface it via onFile(null, message) so the parent stores the error
-        // and UploadZone renders it below the drop target.
-        onFile(null, err.message);
-      }
-    },
-    [docType, onFile],
+function FieldLabel({ htmlFor, children, required }) {
+  return (
+    <label
+      htmlFor={htmlFor}
+      className="block font-body text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5"
+    >
+      {children}
+      {required && <span className="text-primary-500 ml-0.5">*</span>}
+    </label>
   );
+}
 
-  const onDrop = useCallback(
+function FieldError({ message }) {
+  if (!message) return null;
+  return (
+    <p className="mt-1.5 font-body text-xs text-primary-600 flex items-center gap-1">
+      <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+      {message}
+    </p>
+  );
+}
+
+// ─── File drop zone ───────────────────────────────────────────────────────────
+
+function FileDropZone({ file, onFile, onClear, error }) {
+  const inputRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDrop = useCallback(
     (e) => {
       e.preventDefault();
-      setDragging(false);
-      handleFiles(e.dataTransfer.files);
+      setIsDragging(false);
+      const dropped = e.dataTransfer.files[0];
+      if (dropped) onFile(dropped);
     },
-    [handleFiles],
+    [onFile],
   );
 
-  return (
-    <div className="space-y-2">
-      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
-        {label}
-      </label>
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+  const handleDragLeave = () => setIsDragging(false);
 
+  if (file) {
+    return (
       <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        onClick={() => inputRef.current?.click()}
-        className={[
-          "relative flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed",
-          "cursor-pointer transition-all duration-200 py-8 px-4 text-center",
-          dragging
-            ? "border-tam-red bg-red-50"
-            : file
-              ? "border-emerald-400 bg-emerald-50"
-              : error
-                ? "border-red-400 bg-red-50"
-                : "border-gray-300 bg-gray-50 hover:border-tam-red hover:bg-red-50/30",
-        ].join(" ")}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ACCEPTED_MIME.join(",")}
-          className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
-        />
-
-        {file ? (
-          <>
-            <CheckCircle2 size={24} className="text-emerald-500" />
-            <div>
-              <p className="text-sm font-medium text-emerald-700 truncate max-w-[200px]">
-                {file.name}
-              </p>
-              <p className="text-xs text-emerald-600">
-                {(file.size / 1024 / 1024).toFixed(2)} MB
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onFile(null, null);
-              }}
-              className="absolute top-2 right-2 p-1 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-red-500 transition-colors"
-              aria-label="Remove file"
-            >
-              <X size={12} />
-            </button>
-          </>
-        ) : (
-          <>
-            <CloudUpload
-              size={24}
-              className={error ? "text-red-400" : "text-gray-400"}
-            />
-            <div>
-              <p className="text-sm font-medium text-gray-600">
-                Drop file here or <span className="text-tam-red">browse</span>
-              </p>
-              <p className="text-xs text-gray-400 mt-0.5">
-                JPEG, PNG, WebP, PDF · max 5 MB
-              </p>
-            </div>
-          </>
+        className={cn(
+          "flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl",
+          "border border-secondary-200 bg-secondary-50",
         )}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center flex-shrink-0">
+            <Paperclip
+              className="w-4 h-4 text-secondary-600"
+              aria-hidden="true"
+            />
+          </div>
+          <div className="min-w-0">
+            <p className="font-body text-sm font-medium text-gray-900 truncate">
+              {file.name}
+            </p>
+            <p className="font-body text-xs text-gray-400">
+              {(file.size / 1024).toFixed(1)} KB
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label="Remove selected file"
+          className={cn(
+            "w-7 h-7 flex items-center justify-center rounded-lg flex-shrink-0",
+            "text-gray-400 hover:text-gray-700 hover:bg-white transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
+          )}
+        >
+          <X className="w-4 h-4" aria-hidden="true" />
+        </button>
       </div>
+    );
+  }
 
-      {error && (
-        <p className="text-xs text-red-600 flex items-center gap-1">
-          <AlertTriangle size={11} />
-          {error}
-        </p>
-      )}
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        className={cn(
+          "w-full flex flex-col items-center justify-center gap-3 px-6 py-8 rounded-xl",
+          "border-2 border-dashed transition-all duration-200 cursor-pointer",
+          "focus-visible:outline-none focus-visible:ring-2",
+          "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+          isDragging
+            ? "border-primary-400 bg-primary-50/50"
+            : error
+              ? "border-primary-200 bg-primary-50/20"
+              : "border-gray-200 hover:border-gray-300 hover:bg-gray-50/50",
+        )}
+        aria-label="Upload document — click or drag and drop"
+      >
+        <div
+          className={cn(
+            "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+            isDragging ? "bg-primary-100" : "bg-gray-100",
+          )}
+        >
+          <Upload
+            className={cn(
+              "w-5 h-5",
+              isDragging ? "text-primary-500" : "text-gray-400",
+            )}
+            aria-hidden="true"
+          />
+        </div>
+        <div className="text-center">
+          <p className="font-body text-sm font-medium text-gray-700">
+            Click to upload or drag & drop
+          </p>
+          <p className="font-body text-xs text-gray-400 mt-0.5">
+            PDF, JPG, PNG up to 5 MB
+          </p>
+        </div>
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACCEPTED_EXTENSIONS}
+        className="sr-only"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onFile(f);
+          e.target.value = "";
+        }}
+      />
+      <FieldError message={error} />
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   2C. UploadModal
-   Slide-up sheet for selecting and uploading a document file.
-───────────────────────────────────────────────────────────────────────────── */
+// ─── Upload form ──────────────────────────────────────────────────────────────
 
-/**
- * @param {{
- *   docType: string | null,
- *   onClose: () => void,
- *   onSuccess: () => void,
- * }} props
- */
-function UploadModal({ docType, onClose, onSuccess }) {
-  const prefersReducedMotion = useReducedMotion();
+function UploadForm({ isApproved }) {
   const queryClient = useQueryClient();
 
+  const [docType, setDocType] = useState("");
+  const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
-  const [fileError, setFileError] = useState(null);
-  const [progress, setProgress] = useState(0);
+  const [fileError, setFileError] = useState("");
+  const [docTypeError, setDocTypeError] = useState("");
 
-  const label = docType ? (DOCUMENT_TYPE_LABELS[docType] ?? docType) : "";
-
-  const {
-    mutate: upload,
-    isPending,
-    error: uploadError,
-    reset,
-  } = useMutation({
-    mutationFn: () =>
-      documentService.uploadDocuments({ [docType]: file }, (pct) =>
-        setProgress(pct),
-      ),
+  const uploadMutation = useMutation({
+    mutationFn: memberService.uploadDocuments,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.all });
-      queryClient.invalidateQueries({ queryKey: DOCUMENT_QUERY_KEYS.all });
-      onSuccess();
+      queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.profile });
+      toast.success("Document uploaded successfully.");
+      setDocType("");
+      setTitle("");
+      setFile(null);
+      setFileError("");
+      setDocTypeError("");
+    },
+    onError: (error) => {
+      toast.error(error.message ?? "Upload failed. Please try again.");
     },
   });
 
-  // Reset state each time the modal opens for a new docType
-  useEffect(() => {
-    setFile(null);
-    setFileError(null);
-    setProgress(0);
-    reset();
-  }, [docType, reset]);
-
-  const handleFile = useCallback(
-    (f, err) => {
-      setFile(f);
-      setFileError(err ?? null);
-      reset();
-    },
-    [reset],
-  );
-
-  const handleSubmit = () => {
-    if (!file || fileError) return;
-    upload();
+  const handleFile = (f) => {
+    setFileError("");
+    if (!ACCEPTED_MIME.includes(f.type)) {
+      setFileError("Only PDF, JPG, and PNG files are accepted.");
+      return;
+    }
+    if (f.size > MAX_FILE_BYTES) {
+      setFileError("File must be smaller than 5 MB.");
+      return;
+    }
+    setFile(f);
   };
 
-  const slideVariants = prefersReducedMotion
-    ? { hidden: { opacity: 0 }, visible: { opacity: 1 }, exit: { opacity: 0 } }
-    : {
-        hidden: { opacity: 0, y: 40 },
-        visible: {
-          opacity: 1,
-          y: 0,
-          transition: { type: "spring", damping: 26, stiffness: 320 },
-        },
-        exit: { opacity: 0, y: 40, transition: { duration: 0.18 } },
-      };
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    let valid = true;
 
-  if (!docType) return null;
+    if (!docType) {
+      setDocTypeError("Please select a document type.");
+      valid = false;
+    } else {
+      setDocTypeError("");
+    }
+
+    if (!file) {
+      setFileError("Please select a file to upload.");
+      valid = false;
+    }
+
+    if (!valid) return;
+
+    uploadMutation.mutate({
+      documentType: docType,
+      file,
+      title: title.trim() || DOC_TYPE_MAP[docType],
+    });
+  };
+
+  if (isApproved) {
+    return (
+      <div className="flex items-start gap-3 px-4 py-4 rounded-xl bg-secondary-50 border border-secondary-200">
+        <ShieldCheck
+          className="w-4 h-4 text-secondary-500 flex-shrink-0 mt-0.5"
+          aria-hidden="true"
+        />
+        <p className="font-body text-sm text-secondary-700 leading-relaxed">
+          Your profile has been approved. Document uploads are locked to
+          preserve membership integrity.
+        </p>
+      </div>
+    );
+  }
+
+  const isUploading = uploadMutation.isPending;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="upload-modal-title"
-    >
-      {/* Backdrop */}
-      <motion.div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={!isPending ? onClose : undefined}
-      />
+    <form onSubmit={handleSubmit} noValidate className="space-y-5">
+      {/* Document type */}
+      <div>
+        <FieldLabel htmlFor="docType" required>
+          Document Type
+        </FieldLabel>
+        <select
+          id="docType"
+          value={docType}
+          onChange={(e) => {
+            setDocType(e.target.value);
+            setDocTypeError("");
+          }}
+          disabled={isUploading}
+          className={cn(
+            "w-full px-3 py-2.5 rounded-lg border font-body text-sm text-gray-900 bg-white",
+            "focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent",
+            "transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed",
+            docTypeError
+              ? "border-primary-300"
+              : "border-gray-200 hover:border-gray-300",
+          )}
+        >
+          <option value="">Select document type…</option>
+          {DOC_TYPES.map((d) => (
+            <option key={d.value} value={d.value}>
+              {d.label}
+            </option>
+          ))}
+        </select>
+        <FieldError message={docTypeError} />
+      </div>
 
-      {/* Sheet */}
-      <motion.div
-        className="relative z-10 w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden"
-        variants={slideVariants}
-        initial="hidden"
-        animate="visible"
-        exit="exit"
+      {/* Optional title override */}
+      <div>
+        <FieldLabel htmlFor="docTitle">Label (optional)</FieldLabel>
+        <input
+          id="docTitle"
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          disabled={isUploading}
+          placeholder={
+            docType ? DOC_TYPE_MAP[docType] : "Defaults to document type name"
+          }
+          maxLength={100}
+          className={cn(
+            "w-full px-3 py-2.5 rounded-lg border font-body text-sm text-gray-900",
+            "focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent",
+            "transition-colors duration-150 border-gray-200 hover:border-gray-300",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+          )}
+        />
+        <p className="mt-1 font-body text-xs text-gray-400">
+          A short label helps identify this document later.
+        </p>
+      </div>
+
+      {/* File drop zone */}
+      <div>
+        <FieldLabel required>File</FieldLabel>
+        <FileDropZone
+          file={file}
+          onFile={handleFile}
+          onClear={() => {
+            setFile(null);
+            setFileError("");
+          }}
+          error={fileError}
+        />
+      </div>
+
+      <button
+        type="submit"
+        disabled={isUploading}
+        className={cn(
+          "inline-flex items-center gap-2 px-5 py-2.5 rounded-lg",
+          "font-body text-sm font-medium transition-all duration-150 shadow-sm",
+          "focus-visible:outline-none focus-visible:ring-2",
+          "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+          isUploading
+            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+            : "bg-gray-900 text-white hover:bg-gray-800",
+        )}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-          <div>
-            <h2
-              id="upload-modal-title"
-              className="text-sm font-semibold text-gray-800"
-            >
-              Upload — {label}
-            </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              Replaces any previously uploaded file for this document type.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isPending}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
-            aria-label="Close"
-          >
-            <X size={16} />
-          </button>
+        {isUploading ? (
+          <>
+            <RefreshCw className="w-4 h-4 animate-spin" aria-hidden="true" />
+            Uploading…
+          </>
+        ) : (
+          <>
+            <FilePlus className="w-4 h-4" aria-hidden="true" />
+            Upload Document
+          </>
+        )}
+      </button>
+    </form>
+  );
+}
+
+// ─── Document list ────────────────────────────────────────────────────────────
+
+function DocumentList({ documents }) {
+  if (!documents?.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+        <div className="w-12 h-12 rounded-2xl bg-gray-50 border border-gray-100 flex items-center justify-center">
+          <FileText className="w-6 h-6 text-gray-300" aria-hidden="true" />
         </div>
+        <p className="font-body text-sm text-gray-400">
+          No documents uploaded yet.
+        </p>
+      </div>
+    );
+  }
 
-        {/* Body */}
-        <div className="px-5 py-5 space-y-4">
-          <UploadZone
-            docType={docType}
-            file={file}
-            onFile={handleFile}
-            error={fileError}
-          />
-
-          {/* Upload progress */}
-          {isPending && (
-            <div className="space-y-1.5">
-              <div className="flex justify-between text-xs text-gray-500">
-                <span>Uploading…</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
-                <motion.div
-                  className="h-full bg-tam-red rounded-full"
-                  style={{ width: `${progress}%` }}
-                  transition={{ duration: 0.2 }}
-                />
-              </div>
+  return (
+    <ul
+      className="divide-y divide-gray-50"
+      role="list"
+      aria-label="Uploaded documents"
+    >
+      {documents.map((doc) => (
+        <li
+          key={doc._id ?? doc.publicId ?? doc.url}
+          className="flex items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center flex-shrink-0">
+              <FileText className="w-4 h-4 text-gray-400" aria-hidden="true" />
             </div>
-          )}
-
-          {/* API error */}
-          {uploadError && (
-            <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5">
-              <AlertTriangle
-                size={14}
-                className="text-red-500 mt-0.5 shrink-0"
-              />
-              <p className="text-xs text-red-700">
-                {uploadError?.response?.data?.message ??
-                  "Upload failed. Please try again."}
+            <div className="min-w-0">
+              <p className="font-body text-sm font-medium text-gray-900 truncate">
+                {doc.title ||
+                  DOC_TYPE_MAP[doc.documentType] ||
+                  doc.documentType}
               </p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="font-body text-xs text-gray-400">
+                  {DOC_TYPE_MAP[doc.documentType] ?? doc.documentType}
+                </span>
+                {doc.uploadedAt && (
+                  <>
+                    <span className="text-gray-200 text-xs" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="font-body text-xs text-gray-400">
+                      {formatDate(doc.uploadedAt)}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-          )}
-
-          {/* Info note */}
-          <div className="flex items-start gap-2 rounded-md border border-blue-100 bg-blue-50 px-3 py-2.5">
-            <Info size={13} className="text-blue-500 mt-0.5 shrink-0" />
-            <p className="text-xs text-blue-700 leading-relaxed">
-              Documents are reviewed by the TAM compliance team. You will be
-              notified once your document status changes.
-            </p>
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isPending}
-            className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!file || !!fileError || isPending}
-            className={[
-              "flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold text-white",
-              "bg-tam-red hover:bg-tam-red/90 transition-colors",
-              "disabled:opacity-40 disabled:cursor-not-allowed",
-            ].join(" ")}
-          >
-            {isPending ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                Uploading…
-              </>
-            ) : (
-              <>
-                <Upload size={14} />
-                Upload Document
-              </>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {doc.verified && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary-50 border border-secondary-200"
+                aria-label="Document verified"
+              >
+                <CheckCircle2
+                  className="w-3 h-3 text-secondary-500"
+                  aria-hidden="true"
+                />
+                <span className="font-body text-xs text-secondary-600 font-medium">
+                  Verified
+                </span>
+              </span>
             )}
-          </button>
-        </div>
-      </motion.div>
+            {doc.url && (
+              <a
+                href={doc.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`View ${doc.title || doc.documentType}`}
+                className={cn(
+                  "w-8 h-8 flex items-center justify-center rounded-lg",
+                  "text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
+                )}
+              >
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+              </a>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ─── Error state ──────────────────────────────────────────────────────────────
+
+function ErrorState({ onRetry }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <div className="w-14 h-14 rounded-2xl bg-primary-50 border border-primary-100 flex items-center justify-center">
+        <AlertCircle className="w-7 h-7 text-primary-400" aria-hidden="true" />
+      </div>
+      <div className="text-center max-w-xs">
+        <p className="font-display font-bold text-gray-900 text-lg">
+          Failed to load documents
+        </p>
+        <p className="font-body text-gray-500 text-sm mt-1">
+          There was a problem fetching your profile data.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onRetry}
+        className={cn(
+          "inline-flex items-center gap-2 px-5 py-2.5 rounded-xl",
+          "bg-gray-900 text-white font-body text-sm font-medium",
+          "hover:bg-gray-800 transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2",
+          "focus-visible:ring-gray-900 focus-visible:ring-offset-2",
+        )}
+      >
+        <RefreshCw className="w-4 h-4" aria-hidden="true" />
+        Try Again
+      </button>
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   3. DocumentsPage
-───────────────────────────────────────────────────────────────────────────── */
-
-/** Framer Motion variants — stagger container */
-const containerVariants = (reduced) => ({
-  hidden: {},
-  visible: {
-    transition: { staggerChildren: reduced ? 0 : 0.07 },
-  },
-});
-
-/** Framer Motion variants — individual card */
-const cardVariants = (reduced) => ({
-  hidden: { opacity: 0, y: reduced ? 0 : 16 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: reduced ? 0 : 0.35, ease: "easeOut" },
-  },
-});
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DocumentsPage() {
   const prefersReducedMotion = useReducedMotion();
-  const [activeDocType, setActiveDocType] = useState(null);
-  const [modalVisible, setModalVisible] = useState(false);
+  const variants = prefersReducedMotion ? reducedFade : fadeUp;
 
-  /* ── Data ─────────────────────────────────────────────────────────────── */
   const {
-    data: rawProfile,
+    data: profileData,
     isLoading,
     isError,
     error,
     refetch,
   } = useQuery({
-    queryKey: MEMBER_QUERY_KEYS.profile(),
-    queryFn: memberService.getMyProfile,
+    queryKey: MEMBER_QUERY_KEYS.profile,
+    queryFn: memberService.getProfile,
     staleTime: 5 * 60 * 1000,
-    retry: (count, err) => err?.response?.status !== 404 && count < 2,
+    retry: 1,
   });
 
-  // Normalise envelope — backend wraps in { data: profile } via ApiResponse
-  const profile = rawProfile?.data ?? rawProfile ?? null;
+  const profile = profileData?.data ?? profileData ?? null;
   const documents = profile?.documents ?? [];
-  const isLocked = !!profile?.isApproved;
+  const isApproved = profile?.isApproved ?? false;
 
-  /** Map documentType → document object for O(1) lookup in card grid. */
-  const docMap = Object.fromEntries(documents.map((d) => [d.documentType, d]));
+  if (isLoading) return <PageSkeleton />;
 
-  /* ── Stats ────────────────────────────────────────────────────────────── */
-  const totalDocs = documents.length;
-  const approvedDocs = documents.filter((d) => d.status === "approved").length;
-  const pendingDocs = documents.filter((d) => d.status === "pending").length;
-  const rejectedDocs = documents.filter((d) => d.status === "rejected").length;
-
-  /* ── Upload handlers ──────────────────────────────────────────────────── */
-  const handleUploadClick = useCallback((docType) => {
-    setActiveDocType(docType);
-    setModalVisible(true);
-  }, []);
-
-  const handleModalClose = useCallback(() => {
-    setModalVisible(false);
-  }, []);
-
-  const handleUploadSuccess = useCallback(() => {
-    setModalVisible(false);
-  }, []);
-
-  /* ── Render states ────────────────────────────────────────────────────── */
-  if (isLoading) {
-    return (
-      <div className="flex flex-col gap-6 p-6">
-        {/* Page header skeleton */}
-        <div className="h-8 w-48 rounded-md bg-gray-200 animate-pulse" />
-        {/* Stats row skeleton */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              className="h-20 rounded-lg bg-gray-100 animate-pulse"
-            />
-          ))}
-        </div>
-        {/* Cards skeleton */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[...Array(5)].map((_, i) => (
-            <div
-              key={i}
-              className="h-44 rounded-lg bg-gray-100 animate-pulse"
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
+  // 404 = member has no profile yet — show the page with empty state, not an error
+  // Any other error = real failure worth surfacing
   if (isError) {
-    const is404 = error?.response?.status === 404;
-    return (
-      <div className="flex flex-col items-center justify-center py-24 px-6 text-center">
-        {is404 ? (
-          <>
-            <FileText size={36} className="text-gray-300 mb-4" />
-            <h2 className="text-base font-semibold text-gray-700 mb-1">
-              No profile found
-            </h2>
-            <p className="text-sm text-gray-500 mb-6 max-w-sm">
-              You need to create your profile before you can upload documents.
-            </p>
-            <Link
-              to="/member/profile"
-              className="inline-flex items-center gap-2 rounded-lg bg-tam-red px-5 py-2.5 text-sm font-semibold text-white hover:bg-tam-red/90 transition-colors"
-            >
-              Create Profile
-              <ChevronRight size={15} />
-            </Link>
-          </>
-        ) : (
-          <>
-            <AlertTriangle size={36} className="text-red-300 mb-4" />
-            <h2 className="text-base font-semibold text-gray-700 mb-1">
-              Failed to load documents
-            </h2>
-            <p className="text-sm text-gray-500 mb-6">
-              {error?.response?.data?.message ??
-                "Something went wrong. Please try again."}
-            </p>
-            <button
-              type="button"
-              onClick={() => refetch()}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              <RefreshCw size={14} />
-              Retry
-            </button>
-          </>
-        )}
-      </div>
-    );
+    const status = error?.status ?? error?.response?.status;
+    if (status !== 404) return <ErrorState onRetry={refetch} />;
+    // 404: fall through — profile/documents will both be empty, page renders fine
   }
 
-  /* ── Main render ──────────────────────────────────────────────────────── */
   return (
-    <>
-      <motion.div
-        className="flex flex-col gap-6 p-6"
-        variants={containerVariants(prefersReducedMotion)}
-        initial="hidden"
-        animate="visible"
-      >
-        {/* ── Page header ─────────────────────────────────────────────── */}
-        <motion.div
-          variants={cardVariants(prefersReducedMotion)}
-          className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-        >
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 tracking-tight">
-              KYC Documents
-            </h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Upload and manage your compliance documents for TAM review.
-            </p>
-          </div>
-
-          {isLocked && (
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 self-start sm:self-auto">
-              <ShieldCheck size={13} />
-              Profile approved — documents locked
-            </div>
-          )}
-        </motion.div>
-
-        {/* ── Approval lock notice ─────────────────────────────────────── */}
-        {isLocked && (
-          <motion.div
-            variants={cardVariants(prefersReducedMotion)}
-            className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3"
-          >
-            <ShieldCheck
-              size={16}
-              className="text-emerald-600 mt-0.5 shrink-0"
-            />
-            <div>
-              <p className="text-sm font-medium text-emerald-800">
-                Your documents are locked
-              </p>
-              <p className="text-xs text-emerald-700 mt-0.5 leading-relaxed">
-                Once a profile is approved, documents cannot be replaced.
-                Contact TAM support if an amendment is required.
-              </p>
-            </div>
-          </motion.div>
-        )}
-
-        {/* ── Stats row ───────────────────────────────────────────────── */}
-        <motion.div
-          variants={cardVariants(prefersReducedMotion)}
-          className="grid grid-cols-2 sm:grid-cols-4 gap-4"
-        >
-          {[
-            {
-              label: "Total uploaded",
-              value: totalDocs,
-              colour: "text-gray-800",
-            },
-            {
-              label: "Approved",
-              value: approvedDocs,
-              colour: "text-emerald-600",
-            },
-            {
-              label: "Pending review",
-              value: pendingDocs,
-              colour: "text-amber-600",
-            },
-            { label: "Rejected", value: rejectedDocs, colour: "text-red-600" },
-          ].map(({ label, value, colour }) => (
-            <div
-              key={label}
-              className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm"
-            >
-              <p className={`text-2xl font-bold ${colour}`}>{value}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-            </div>
-          ))}
-        </motion.div>
-
-        {/* ── Document card grid ──────────────────────────────────────── */}
-        <motion.div
-          variants={cardVariants(prefersReducedMotion)}
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
-        >
-          {DOCUMENT_TYPES.map((docType) => (
-            <DocumentCard
-              key={docType}
-              docType={docType}
-              document={docMap[docType] ?? null}
-              isLocked={isLocked}
-              onUploadClick={handleUploadClick}
-            />
-          ))}
-        </motion.div>
-
-        {/* ── Submission CTA ──────────────────────────────────────────── */}
-        {!isLocked && totalDocs > 0 && (
-          <motion.div
-            variants={cardVariants(prefersReducedMotion)}
-            className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-white px-5 py-4 shadow-sm"
-          >
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-50 border border-gray-200">
-                <ShieldCheck size={17} className="text-gray-500" />
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-gray-800">
-                  Ready to submit for review?
-                </p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Once your profile is complete, submit it for TAM compliance
-                  review.
-                </p>
-              </div>
-            </div>
-            <Link
-              to="/member/profile"
-              className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-tam-red px-4 py-2 text-sm font-semibold text-white hover:bg-tam-red/90 transition-colors"
-            >
-              Go to Profile
-              <ChevronRight size={14} />
-            </Link>
-          </motion.div>
-        )}
-
-        {/* ── Empty state — no documents yet ──────────────────────────── */}
-        {totalDocs === 0 && !isLocked && (
-          <motion.div
-            variants={cardVariants(prefersReducedMotion)}
-            className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 py-16 px-6 text-center"
-          >
-            <FileText size={32} className="text-gray-300 mb-3" />
-            <p className="text-sm font-semibold text-gray-600 mb-1">
-              No documents uploaded yet
-            </p>
-            <p className="text-xs text-gray-400 max-w-xs">
-              Click any document card above to upload your KYC files and begin
-              the review process.
-            </p>
-          </motion.div>
-        )}
+    <motion.div
+      initial="hidden"
+      animate="visible"
+      variants={{
+        visible: {
+          transition: { staggerChildren: prefersReducedMotion ? 0 : 0.05 },
+        },
+      }}
+      className="space-y-6 max-w-2xl mx-auto"
+    >
+      {/* ── Page header ──────────────────────────────────────────────────── */}
+      <motion.div variants={variants} custom={0}>
+        <h1 className="font-display font-bold text-gray-900 text-2xl sm:text-3xl">
+          Documents
+        </h1>
+        <p className="font-body text-gray-400 text-sm mt-1">
+          Upload KYC documents required for TAM membership verification.
+        </p>
       </motion.div>
 
-      {/* ── Upload modal ──────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {modalVisible && (
-          <UploadModal
-            key="upload-modal"
-            docType={activeDocType}
-            onClose={handleModalClose}
-            onSuccess={handleUploadSuccess}
+      {/* ── Upload section ────────────────────────────────────────────────── */}
+      <motion.div
+        variants={variants}
+        custom={1}
+        className="bg-white rounded-xl border border-gray-100 overflow-hidden"
+      >
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-50 bg-gray-50/50">
+          <Upload
+            className="w-4 h-4 text-gray-400 flex-shrink-0"
+            aria-hidden="true"
           />
-        )}
-      </AnimatePresence>
-    </>
+          <h2 className="font-display font-bold text-gray-900 text-sm">
+            Upload New Document
+          </h2>
+        </div>
+        <div className="px-6 py-5">
+          <UploadForm isApproved={isApproved} />
+        </div>
+      </motion.div>
+
+      {/* ── Uploaded documents ────────────────────────────────────────────── */}
+      <motion.div
+        variants={variants}
+        custom={2}
+        className="bg-white rounded-xl border border-gray-100 overflow-hidden"
+      >
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-gray-50 bg-gray-50/50">
+          <div className="flex items-center gap-3">
+            <FileText
+              className="w-4 h-4 text-gray-400 flex-shrink-0"
+              aria-hidden="true"
+            />
+            <h2 className="font-display font-bold text-gray-900 text-sm">
+              Uploaded Documents
+            </h2>
+          </div>
+          <span className="font-body text-xs text-gray-400 font-medium">
+            {documents.length} file{documents.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <div className="px-6 py-5">
+          <DocumentList documents={documents} />
+        </div>
+      </motion.div>
+
+      {/* ── Guidance note ─────────────────────────────────────────────────── */}
+      <motion.div
+        variants={variants}
+        custom={3}
+        className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-gray-50 border border-gray-100"
+        role="note"
+      >
+        <ShieldCheck
+          className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5"
+          aria-hidden="true"
+        />
+        <p className="font-body text-xs text-gray-500 leading-relaxed">
+          Documents are stored securely and used solely for TAM membership
+          verification. Accepted types: PDF, JPG, PNG (max 5 MB each).
+        </p>
+      </motion.div>
+    </motion.div>
   );
 }
