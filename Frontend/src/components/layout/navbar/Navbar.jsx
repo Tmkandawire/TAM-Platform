@@ -55,14 +55,14 @@ export default function Navbar() {
        */}
       <div
         aria-hidden="true"
-        className="fixed top-0 left-0 right-0 h-[3px] bg-primary-gradient z-50"
+        className="fixed top-0 left-0 right-0 h-[3px] bg-primary-gradient z-[51]"
       />
 
       {/* ── Navbar shell ── */}
       <header
         role="banner"
         className={[
-          "fixed top-[3px] left-0 right-0 z-40 bg-white",
+          "fixed top-[3px] left-0 right-0 z-50 bg-white",
           "transition-shadow duration-300",
           isScrolled ? "shadow-md" : "shadow-none border-b border-gray-100",
         ].join(" ")}
