@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Mail, Lock, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
@@ -35,6 +35,7 @@ const itemVariants = {
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
+  const navigate = useNavigate();
 
   const { loginMutation, isLoggingIn } = useAuth();
 
@@ -42,12 +43,32 @@ export default function LoginPage() {
     register,
     handleSubmit,
     formState: { errors },
+    setError,
   } = useForm({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
   });
 
-  const onSubmit = (data) => loginMutation.mutate(data);
+  const onSubmit = (data) => {
+    loginMutation.mutate(data, {
+      onError: (error) => {
+        // A pending user who closed the browser mid-onboarding and tries to
+        // log back in gets ACCOUNT_INACTIVE from the backend. Route them to
+        // /onboarding so they can complete their application rather than
+        // showing a confusing "account inactive" error message.
+        if (error?.code === "ACCOUNT_INACTIVE") {
+          navigate("/onboarding", { replace: true });
+          return;
+        }
+
+        // All other errors surface as a form-level message under the
+        // password field so the user sees it in context.
+        setError("password", {
+          message: error?.message ?? "Invalid email or password.",
+        });
+      },
+    });
+  };
 
   return (
     <div className="min-h-screen flex">
@@ -187,12 +208,12 @@ export default function LoginPage() {
                     Password
                   </label>
 
-                  <button
-                    type="button"
+                  <Link
+                    to="/forgot-password"
                     className="text-xs text-secondary-600 hover:text-secondary-700 font-medium transition-colors"
                   >
                     Forgot password?
-                  </button>
+                  </Link>
                 </div>
 
                 <div className="relative">
