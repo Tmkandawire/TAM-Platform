@@ -8,14 +8,13 @@
  *
  * Actions per status:
  *  Active    → View, Suspend, Soft Delete
+ *  Pending   → View, Approve, Reject, Soft Delete
  *  Rejected  → View, Soft Delete
  *  Suspended → View, Reinstate, Soft Delete
  *  Deleted   → View, Hard Delete (locked for 90-day grace period)
- *  Pending   → View (approve/reject handled on dedicated pending page)
  */
 
-import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Users,
@@ -241,6 +240,8 @@ function MemberDetailModal({ member, onClose }) {
 function ActionMenu({
   member,
   onView,
+  onApprove,
+  onReject,
   onSuspend,
   onReinstate,
   onSoftDelete,
@@ -285,6 +286,32 @@ function ActionMenu({
               <Download className="w-3.5 h-3.5 text-slate-400" /> Export Data
             </button>
 
+            {/* ── Pending actions ── */}
+            {status === "pending" && (
+              <>
+                <div className="mx-3 my-1 border-t border-slate-100" />
+                <button
+                  onClick={() => {
+                    setOpen(false);
+                    onApprove(member);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-emerald-50 text-emerald-600"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                </button>
+                <button
+                  onClick={() => {
+                    setOpen(false);
+                    onReject(member);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-red-50 text-red-600"
+                >
+                  <XCircle className="w-3.5 h-3.5" /> Reject
+                </button>
+              </>
+            )}
+
+            {/* ── Active actions ── */}
             {status === "active" && (
               <button
                 onClick={() => {
@@ -297,6 +324,7 @@ function ActionMenu({
               </button>
             )}
 
+            {/* ── Suspended actions ── */}
             {status === "suspended" && (
               <button
                 onClick={() => {
@@ -309,6 +337,7 @@ function ActionMenu({
               </button>
             )}
 
+            {/* ── Soft delete (all non-deleted) ── */}
             {status !== "deleted" && (
               <button
                 onClick={() => {
@@ -321,6 +350,7 @@ function ActionMenu({
               </button>
             )}
 
+            {/* ── Hard delete (deleted only) ── */}
             {status === "deleted" && (
               <button
                 onClick={() => {
@@ -365,7 +395,6 @@ function SkeletonRow() {
 /* ─── Main page ──────────────────────────────────────────────────────────── */
 
 export default function MembersPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState("all");
@@ -407,6 +436,22 @@ export default function MembersPage() {
     queryClient.invalidateQueries({ queryKey: ADMIN_QUERY_KEYS.memberStats });
   };
 
+  const approveMutation = useMutation({
+    mutationFn: ({ id }) => adminService.approveMember(id),
+    onSuccess: () => {
+      setModal(null);
+      invalidate();
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: ({ id, reason }) => adminService.rejectMember(id, reason),
+    onSuccess: () => {
+      setModal(null);
+      invalidate();
+    },
+  });
+
   const suspendMutation = useMutation({
     mutationFn: ({ id, reason }) => adminService.suspendMember(id, reason),
     onSuccess: () => {
@@ -441,7 +486,7 @@ export default function MembersPage() {
 
   /* ── Export ── */
   const handleExport = (member) => {
-    const data = {
+    const exportData = {
       email: member.email,
       status: member.status,
       businessName: member.profile?.businessName ?? "",
@@ -449,7 +494,7 @@ export default function MembersPage() {
       memberSince: member.createdAt,
       approvedAt: member.approvedAt ?? null,
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -471,6 +516,25 @@ export default function MembersPage() {
   const closeModal = () => setModal(null);
 
   const modalConfig = {
+    approve: {
+      title: "Approve Member",
+      description: `Approve ${modal?.member?.email}? Their account will become active.`,
+      confirmLabel: "Approve",
+      confirmClass: "bg-emerald-600 hover:bg-emerald-700",
+      requireReason: false,
+      onConfirm: () => approveMutation.mutate({ id: modal.member._id }),
+      loading: approveMutation.isPending,
+    },
+    reject: {
+      title: "Reject Application",
+      description: `Reject ${modal?.member?.email}'s application?`,
+      confirmLabel: "Reject",
+      confirmClass: "bg-red-600 hover:bg-red-700",
+      requireReason: true,
+      onConfirm: (reason) =>
+        rejectMutation.mutate({ id: modal.member._id, reason }),
+      loading: rejectMutation.isPending,
+    },
     suspend: {
       title: "Suspend Member",
       description: `Suspend ${modal?.member?.email}? They will lose access immediately.`,
@@ -685,6 +749,12 @@ export default function MembersPage() {
                           <ActionMenu
                             member={member}
                             onView={setViewMember}
+                            onApprove={(m) =>
+                              setModal({ type: "approve", member: m })
+                            }
+                            onReject={(m) =>
+                              setModal({ type: "reject", member: m })
+                            }
                             onSuspend={(m) =>
                               setModal({ type: "suspend", member: m })
                             }
