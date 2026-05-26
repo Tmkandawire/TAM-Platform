@@ -81,41 +81,29 @@ class EmailService {
    */
   constructor(provider = smtpProvider) {
     this.#provider = provider;
-    Object.freeze(this);
   }
 
   /**
-   * Sends a single pre-built email payload.
-   *
-   * Validates the payload structure before dispatching.
-   * Re-throws on failure — callers (event listeners, queue workers)
-   * own the retry strategy.
+   * Core dispatch method — validates payload shape and delegates to provider.
    *
    * @param {import("../email/providers/EmailProvider.js").EmailPayload} payload
    * @returns {Promise<void>}
-   * @throws {TypeError}   on invalid payload structure
-   * @throws {Error}       on provider dispatch failure
    */
   async sendEmail(payload) {
     assertPayloadShape(payload);
+    return this.#provider.send(payload);
+  }
 
-    try {
-      await this.#provider.send(payload);
-
-      logger.info("EmailService: email dispatched.", {
-        to: payload.to,
-        subject: payload.subject,
-      });
-    } catch (error) {
-      logger.error("EmailService: email dispatch failed.", {
-        to: payload.to,
-        subject: payload.subject,
-        error,
-      });
-
-      // Do not swallow — let the caller decide the retry strategy.
-      throw error;
-    }
+  /**
+   * Sends a single transactional email payload.
+   * Alias for sendEmail — used by transactional flows (password reset, etc.)
+   * to distinguish intent from bulk sends at the call site.
+   *
+   * @param {import("../email/providers/EmailProvider.js").EmailPayload} payload
+   * @returns {Promise<void>}
+   */
+  async sendTransactional(payload) {
+    return this.sendEmail(payload);
   }
 
   /**
