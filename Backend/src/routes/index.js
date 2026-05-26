@@ -9,11 +9,16 @@ import documentRoutes from "./documentRoutes.js";
 import auditRoutes from "./auditRoutes.js";
 import notificationRoutes from "./notificationRoutes.js";
 import settingsRoutes from "./settingsRoutes.js";
+import adminNotificationRoutes from "./adminNotificationRoutes.js";
+import { publicContactRouter, adminContactRouter } from "./contactRoutes.js";
 
 const router = express.Router();
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 router.use("/auth", authRoutes);
+
+// ── Public section ───────────────────────────────────────────────────────────
+router.use("/contact", publicContactRouter);
 
 // ── Member portal ─────────────────────────────────────────────────────────────
 router.use("/members", memberRoutes);
@@ -27,9 +32,13 @@ router.use("/settings", settingsRoutes);
 //   /api/v1/admin/documents/*  → adminDocumentRoutes
 //   /api/v1/admin/broadcasts   → broadcastRoutes
 //   /api/v1/admin/audit-logs   → auditRoutes
+//  /api/v1/admin/notifications → adminNotificationRoutes
+// /api/v1/admin/contact       → adminContactRouter
 router.use("/admin/members", adminRoutes);
 router.use("/admin/documents", adminDocumentRoutes);
 router.use("/admin/broadcasts", broadcastRoutes);
 router.use("/admin/audit-logs", auditRoutes);
+router.use("/admin/notifications", adminNotificationRoutes);
+router.use("/admin/contact", adminContactRouter);
 
 export default router;
