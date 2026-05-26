@@ -18,8 +18,6 @@ export const protect = asyncHandler(async (req, res, next) => {
 
   if (req.cookies?.accessToken) {
     token = req.cookies.accessToken;
-  } else if (req.headers.authorization?.startsWith("Bearer")) {
-    token = req.headers.authorization.split(" ")[1];
   }
 
   if (!token) {
@@ -28,7 +26,9 @@ export const protect = asyncHandler(async (req, res, next) => {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET, {
+      algorithms: ["HS256"],
+    });
   } catch {
     throw new ApiError(401, "Invalid or expired token", [], "INVALID_TOKEN");
   }
@@ -44,7 +44,7 @@ export const protect = asyncHandler(async (req, res, next) => {
   let user;
   try {
     user = await User.findById(decoded.id)
-      .select("email role status isDeleted")
+      .select("email role status isDeleted tokenVersion")
       .lean();
   } catch (err) {
     if (err.name === "CastError") {
@@ -55,6 +55,17 @@ export const protect = asyncHandler(async (req, res, next) => {
 
   if (!user || user.isDeleted) {
     throw new ApiError(401, "User not found", [], "USER_NOT_FOUND");
+  }
+  if (
+    decoded.tokenVersion !== undefined &&
+    decoded.tokenVersion !== user.tokenVersion
+  ) {
+    throw new ApiError(
+      401,
+      "Session invalidated",
+      [],
+      "TOKEN_VERSION_MISMATCH",
+    );
   }
 
   // Only hard-block suspended or rejected accounts.
@@ -71,10 +82,11 @@ export const protect = asyncHandler(async (req, res, next) => {
   }
 
   req.user = {
-    id: user._id,
+    id: String(user._id),
     role: user.role,
     status: user.status,
     email: user.email,
+    tokenVersion: user.tokenVersion,
   };
 
   next();
