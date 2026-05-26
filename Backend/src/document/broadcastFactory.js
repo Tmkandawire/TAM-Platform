@@ -278,7 +278,7 @@ function buildDto(broadcast, recipient) {
   );
 
   const dto = {
-    userId,
+    user: userId,
     type,
     title,
     message,
