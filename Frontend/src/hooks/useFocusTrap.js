@@ -13,11 +13,6 @@
  *  • Recalculates focusable nodes on every keydown — handles dynamic DOM
  *    mutations (disabled state changes, conditional rendering, portals)
  *
- * Extracted from useNavbar so it can be:
- *  • Reused by modals, drawers, tooltips, and any future dialog component
- *  • Unit-tested independently of navbar state (see Phase 5 tests)
- *  • Audited in isolation for WCAG 2.1.2 compliance
- *
  * WCAG Compliance:
  *  2.1.2 — No Keyboard Trap (focus must be trappable AND escapable)
  *  2.4.3 — Focus Order (focus restoration preserves logical order)
@@ -34,14 +29,6 @@ import { useEffect, useLayoutEffect } from "react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/**
- * Selector covering all natively focusable elements.
- * Excludes elements with negative tabindex (programmatic-only focus),
- * disabled form controls, and hidden elements.
- *
- * Evaluated fresh on each keydown so dynamic DOM mutations
- * (e.g. a button becoming disabled mid-interaction) are caught correctly.
- */
 const FOCUSABLE_SELECTOR = [
   "a[href]:not([disabled]):not([hidden])",
   "button:not([disabled]):not([hidden])",
@@ -53,23 +40,12 @@ const FOCUSABLE_SELECTOR = [
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
-/**
- * Returns first and last focusable elements within a container.
- * Filters out elements not currently visible in the layout
- * (offsetParent === null catches display:none subtrees).
- *
- * @param {HTMLElement | null} container
- * @returns {{ first: HTMLElement | null, last: HTMLElement | null }}
- */
 function getFocusableEdges(container) {
   if (!container) return { first: null, last: null };
 
   const nodes = Array.from(
     container.querySelectorAll(FOCUSABLE_SELECTOR),
-  ).filter(
-    // Exclude elements hidden via display:none or visibility:hidden
-    (el) => !el.closest("[hidden]") && el.offsetParent !== null,
-  );
+  ).filter((el) => !el.closest("[hidden]") && el.offsetParent !== null);
 
   return {
     first: nodes.at(0) ?? null,
@@ -79,14 +55,6 @@ function getFocusableEdges(container) {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-/**
- * @param {{
- *   containerRef:    React.RefObject<HTMLElement>,
- *   restoreFocusRef: React.RefObject<HTMLElement>,
- *   active:          boolean,
- *   onEscape?:       () => void,
- * }} options
- */
 export function useFocusTrap({
   containerRef,
   restoreFocusRef,
@@ -94,29 +62,15 @@ export function useFocusTrap({
   onEscape,
 }) {
   // ── Move focus into container when trap activates ──────────────────────────
-  //
-  // useLayoutEffect fires synchronously after DOM mutations, before the browser
-  // paints — guaranteeing the drawer is in the DOM before we query it.
-  // requestAnimationFrame defers the actual .focus() call to the next paint
-  // cycle, ensuring Framer Motion's entrance animation has started and the
-  // element is both mounted AND composited before receiving focus.
-  //
-  // This replaces the fragile setTimeout(50) pattern: instead of guessing
-  // an arbitrary delay, we hook into the browser's own render pipeline.
-  //
   useLayoutEffect(() => {
     if (!active) return;
 
-    let rafId;
-
-    rafId = requestAnimationFrame(() => {
+    const rafId = requestAnimationFrame(() => {
       const { first } = getFocusableEdges(containerRef.current);
       first?.focus();
     });
 
-    return () => {
-      cancelAnimationFrame(rafId);
-    };
+    return () => cancelAnimationFrame(rafId);
   }, [active, containerRef]);
 
   // ── Keyboard handler: Tab cycling + Escape ─────────────────────────────────
@@ -125,31 +79,23 @@ export function useFocusTrap({
 
     const handleKeyDown = (e) => {
       if (e.key === "Escape") {
-        // Call consumer's close handler, then restore focus
         onEscape?.();
-        // Defer focus restoration to next tick — consumer's state update
-        // (setMobileOpen(false)) must complete first so the button is
-        // fully interactive before receiving focus
         requestAnimationFrame(() => {
-          restoreFocusRef.current?.focus();
+          restoreFocusRef?.current?.focus();
         });
         return;
       }
 
       if (e.key === "Tab") {
-        // Recalculate on each keydown — handles dynamic DOM mutations:
-        // a button becoming disabled, conditional renders, or async content
         const { first, last } = getFocusableEdges(containerRef.current);
         if (!first || !last) return;
 
         if (e.shiftKey) {
-          // Shift+Tab: at first element → wrap to last
           if (document.activeElement === first) {
             e.preventDefault();
             last.focus();
           }
         } else {
-          // Tab: at last element → wrap to first
           if (document.activeElement === last) {
             e.preventDefault();
             first.focus();
