@@ -69,7 +69,7 @@ export default function PublicLayout() {
   const variants = prefersReducedMotion ? reducedPageVariants : pageVariants;
 
   return (
-    <div className="min-h-screen flex flex-col bg-white font-body">
+    <div className="min-h-screen flex flex-col bg-white font-body w-full overflow-x-hidden">
       {/* Resets scroll to top on every route change — no visual output */}
       <ScrollRestoration />
 
@@ -77,7 +77,7 @@ export default function PublicLayout() {
       <Navbar />
 
       {/* Page content — animates on route change, respects reduced-motion */}
-      <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence mode="wait">
         <motion.main
           key={location.pathname}
           role="main"
@@ -86,7 +86,7 @@ export default function PublicLayout() {
           initial="initial"
           animate="animate"
           exit="exit"
-          className="flex-1"
+          className="flex-1 w-full min-w-0"
         >
           <Outlet />
         </motion.main>
