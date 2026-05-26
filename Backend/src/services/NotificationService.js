@@ -26,8 +26,14 @@ import notificationValidator from "../validators/notificationValidator.js";
 import {
   buildDocumentApprovedEmail,
   buildDocumentRejectedEmail,
+  buildAccountApprovedEmail,
+  buildAccountSuspendedEmail,
+  buildAccountReinstatedEmail,
 } from "../email/factories/emailFactory.js";
-import { DOCUMENT_EVENT } from "../constants/notificationTypes.js";
+import {
+  DOCUMENT_EVENT,
+  NOTIFICATION_TYPE,
+} from "../constants/notificationTypes.js";
 import logger from "../utils/logger.js";
 import emailService from "../email/EmailService.js";
 
@@ -120,9 +126,33 @@ function buildEmailPayload(dto) {
         links: { dashboardUrl: dto.links?.dashboardUrl ?? null },
       });
 
+    case NOTIFICATION_TYPE.ACCOUNT_ACTION: {
+      const action = dto.metadata?.action;
+
+      if (action === "MEMBER_APPROVED") {
+        return buildAccountApprovedEmail({
+          userEmail: dto.userEmail,
+          links: { dashboardUrl: dto.links?.dashboardUrl ?? null },
+        });
+      }
+
+      if (action === "MEMBER_SUSPENDED") {
+        return buildAccountSuspendedEmail({
+          userEmail: dto.userEmail,
+        });
+      }
+
+      if (action === "MEMBER_REINSTATED") {
+        return buildAccountReinstatedEmail({
+          userEmail: dto.userEmail,
+          links: { dashboardUrl: dto.links?.dashboardUrl ?? null },
+        });
+      }
+
+      return null;
+    }
+
     default:
-      // Returning null signals to EmailService that this type has no email.
-      // EmailService will log a warning — intentional, surfaces missing wiring.
       return null;
   }
 }
@@ -235,6 +265,35 @@ class NotificationService {
   }
 
   /**
+   * Returns a paginated notification feed with accurate total count.
+   * This is the method the feed controller should call — it returns
+   * both the page slice and the total document count needed for
+   * correct pagination metadata.
+   *
+   * @param {string}  userId
+   * @param {Object}  [options={}]
+   * @param {unknown} [session]
+   * @returns {Promise<{ notifications: Object[], total: number }>}
+   */
+  async getFeed(userId, options = {}, session) {
+    assertValid(
+      notificationValidator.validateUserId(userId),
+      "getFeed[userId]",
+    );
+    assertValid(
+      notificationValidator.validateQueryOptions(options),
+      "getFeed[options]",
+    );
+
+    const [notifications, total] = await Promise.all([
+      this.#repository.findByUser(userId, options, session),
+      this.#repository.countByUser(userId, options.status, session),
+    ]);
+
+    return { notifications, total };
+  }
+
+  /**
    * @param {string}  userId
    * @param {Object}  [options={}]
    * @param {unknown} [session]
@@ -325,6 +384,24 @@ class NotificationService {
     );
 
     return this.#repository.deleteById(notificationId, userId, session);
+  }
+
+  /**
+   * Deletes all ARCHIVED notifications for a user.
+   * Called by the "Clear Archived" action — never touches UNREAD or READ.
+   *
+   * @param {string}  userId
+   * @param {unknown} [session]
+   * @returns {Promise<number>} Count of deleted notifications.
+   */
+  async deleteAllArchivedByUser(userId, session) {
+    assertValid(
+      notificationValidator.validateUserId(userId),
+      "deleteAllArchivedByUser",
+    );
+
+    const result = await this.#repository.deleteArchivedByUser(userId, session);
+    return result.deletedCount;
   }
 
   /**
