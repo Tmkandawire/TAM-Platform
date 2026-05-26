@@ -18,8 +18,9 @@ const ROLE_HOME = {
  * useAuth — convenience hook for auth actions.
  *
  * Token strategy — cookie-only:
- *  The backend sets auth cookies on login. This hook never handles tokens
- *  directly — it only stores the user object returned in the response body.
+ *  The backend sets auth cookies on login and registration. This hook
+ *  never handles tokens directly — it only stores the user object
+ *  returned in the response body.
  */
 export function useAuth() {
   const { user, isAuthenticated, login, logout: storeLogout } = useAuthStore();
@@ -32,15 +33,6 @@ export function useAuth() {
   const loginMutation = useMutation({
     mutationFn: authService.login,
     onSuccess: (data) => {
-      /**
-       * Backend login response body: { success, message, data: user }
-       * The Axios interceptor unwraps response.data, so `data` here is the
-       * full ApiResponse object. Extract the user from data.data, with a
-       * fallback to data directly in case the shape differs.
-       *
-       * Cookie strategy: accessToken, refreshToken, csrfToken are all set
-       * as httpOnly cookies by the backend — no token handling needed here.
-       */
       const userData = data?.data ?? data;
       login(userData);
 
@@ -49,8 +41,7 @@ export function useAuth() {
       /**
        * Redirect priority:
        *  1. `from` — the full URL the user was trying to reach before being
-       *              sent to /login (set by ProtectedRoute, includes
-       *              pathname + search + hash).
+       *              sent to /login (set by ProtectedRoute).
        *  2. Role home — their default dashboard if no prior destination.
        *  3. "/" — absolute fallback.
        */
@@ -60,6 +51,15 @@ export function useAuth() {
       navigate(destination, { replace: true });
     },
     onError: (error) => {
+      // ACCOUNT_INACTIVE means the user registered but never completed
+      // onboarding, or their account is pending. Route them to onboarding
+      // so they can finish rather than showing a dead-end error.
+      if (error.code === "ACCOUNT_INACTIVE") {
+        toast.info("Please complete your profile to continue.");
+        navigate("/onboarding", { replace: true });
+        return;
+      }
+
       toast.error(error.message);
     },
   });
@@ -67,12 +67,18 @@ export function useAuth() {
   /* ── Register ─────────────────────────────────────────────────────── */
   const registerMutation = useMutation({
     mutationFn: authService.register,
-    onSuccess: () => {
-      toast.success(
-        "Account created! Your application is pending review. You will be notified once approved.",
-        { duration: 6000 },
-      );
-      navigate("/login", { replace: true });
+    onSuccess: (data) => {
+      // Backend now creates a session on registration and returns the user
+      // object with auth cookies. Populate the store so ProtectedRoute
+      // knows the user is authenticated before /auth/me resolves.
+      const userData = data?.data ?? data;
+      login(userData);
+
+      toast.success("Account created! Let's set up your profile.");
+
+      // Redirect to onboarding — user is already authenticated (cookies set).
+      // No login step needed.
+      navigate("/onboarding", { replace: true });
     },
     onError: (error) => {
       toast.error(error.message);
@@ -84,7 +90,6 @@ export function useAuth() {
     mutationFn: authService.logout,
     onSettled: () => {
       // Always clear client state regardless of server response.
-      // Backend clears the cookies — frontend clears the store and cache.
       storeLogout();
       queryClient.clear();
       navigate("/login", { replace: true });
