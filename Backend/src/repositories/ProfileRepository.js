@@ -277,16 +277,16 @@ export class ProfileRepository {
      REVIEW FETCH OPERATIONS
   ───────────────────────────────────────── */
 
-  // FIX: query field was "userId" — Profile model field is "user"
+  // FIX: query fields were "userId" and "documentId" — Profile model field is "user"
   async findDocumentForReview({ userId, documentId }, session) {
-    const profile = await executeLeanQuery(
-      this.#model
-        .findOne({
-          user: userId, // FIX: was "userId"
-          "documents._id": documentId,
-        })
-        .session(session ?? null),
-    );
+    const profile = await this.#model
+      .findOne({
+        user: userId,
+        "documents._id": documentId,
+      })
+      .session(session ?? null)
+      .lean()
+      .exec();
 
     if (!profile) {
       return null;
@@ -296,16 +296,15 @@ export class ProfileRepository {
       (doc) => String(doc._id) === String(documentId),
     );
 
-    return deepFreezeClone({
-      profile,
-      document: document ?? null,
-    });
+    return { profile, document: document ?? null };
   }
 
   async getDocumentForReview(params, session) {
     const result = await this.findDocumentForReview(params, session);
 
-    assertFound(result, params.documentId);
+    if (!result || !result.document) {
+      throw new NotFoundError(`Document not found: ${params.documentId}`);
+    }
 
     return result;
   }
