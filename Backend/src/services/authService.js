@@ -6,13 +6,44 @@ import ms from "ms";
 import User from "../models/User.js";
 import Session from "../models/Session.js";
 import ApiError from "../utils/ApiError.js";
+import notificationService from "./NotificationService.js";
+import { NOTIFICATION_TYPE } from "../constants/notificationTypes.js";
 
 const MAX_SESSIONS = 5;
 
-// Pre-generated hash to prevent timing attacks
-const DUMMY_HASH = "$2a$12$C6UzMDM.H6dfI/f/IKcEeOZ7Z9j/3GQ8Z8Z8Z8Z8Z8Z8Z8Z8Z8Z";
+let _dummyHash = null;
+
+async function getDummyHash() {
+  if (!_dummyHash) {
+    _dummyHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
+  }
+
+  return _dummyHash;
+}
 
 class AuthService {
+  constructor() {
+    if (!process.env.JWT_ACCESS_SECRET || !process.env.JWT_REFRESH_SECRET) {
+      process.stderr.write(
+        "[AuthService] FATAL: JWT_ACCESS_SECRET or JWT_REFRESH_SECRET is not set.\n",
+      );
+
+      process.exit(1);
+    }
+
+    // Optional hardening:
+    if (
+      process.env.JWT_ACCESS_SECRET.length < 32 ||
+      process.env.JWT_REFRESH_SECRET.length < 32
+    ) {
+      process.stderr.write(
+        "[AuthService] FATAL: JWT secrets must be at least 32 characters long.\n",
+      );
+
+      process.exit(1);
+    }
+  }
+
   /* -------------------------
      HELPERS
   ------------------------- */
@@ -64,11 +95,56 @@ class AuthService {
     }
   }
 
+  /**
+   * createSession — shared session-creation logic used by both login and
+   * register. Extracted so register can issue tokens without going through
+   * the isActive() check that login enforces (a freshly registered user has
+   * status "pending" and would fail that check).
+   *
+   * @param {Document} user  - Mongoose User document
+   * @param {object}   meta  - { ip, userAgent }
+   * @returns {{ accessToken: string, refreshToken: string }}
+   */
+  async createSession(user, meta) {
+    await this.enforceSessionLimit(user._id);
+
+    const jti = this.generateJti();
+
+    const accessToken = this.generateAccessToken(user, jti);
+    const refreshToken = this.generateRefreshToken(user, jti);
+
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 12);
+
+    await Session.create({
+      user: user._id,
+      jti,
+      refreshTokenHash,
+      userAgent: meta?.userAgent,
+      ipAddress: meta?.ip,
+      expiresAt: this.getExpiryDate(process.env.JWT_REFRESH_EXPIRY),
+    });
+
+    return { accessToken, refreshToken };
+  }
+
   /* -------------------------
      REGISTER
   ------------------------- */
 
-  async register(userData) {
+  /**
+   * Creates a new user account and immediately opens a session so the
+   * frontend can redirect straight to /onboarding without a separate login.
+   *
+   * The isActive() check is intentionally skipped here — a newly registered
+   * user has status "pending" by default and must reach onboarding before
+   * an admin can approve them. Blocking session creation here would create
+   * the exact gap we are eliminating (register → login gap).
+   *
+   * @param {object} userData - { email, password, role? }
+   * @param {object} meta     - { ip, userAgent }
+   * @returns {{ user, accessToken, refreshToken }}
+   */
+  async register(userData, meta) {
     const { email, password, role } = userData;
 
     const existingUser = await User.findOne({
@@ -86,7 +162,11 @@ class AuthService {
       role: role || "member",
     });
 
-    return user;
+    // Auto-login: create a session immediately so the controller can set
+    // auth cookies and the frontend lands on /onboarding already authenticated.
+    const { accessToken, refreshToken } = await this.createSession(user, meta);
+
+    return { user, accessToken, refreshToken };
   }
 
   /* -------------------------
@@ -99,10 +179,12 @@ class AuthService {
       isDeleted: false,
     }).select("+password");
 
-    // 🔐 Prevent timing attacks
+    // 🔐
+    const hashToUse = user ? null : await getDummyHash();
+
     const isMatch = user
       ? await user.matchPassword(password)
-      : await bcrypt.compare(password, DUMMY_HASH);
+      : await bcrypt.compare(password, hashToUse);
 
     if (!user || !isMatch) {
       if (user) {
@@ -124,33 +206,35 @@ class AuthService {
     }
 
     // Reset attempts
+    const isFirstLogin = !user.lastLoginAt;
     user.loginAttempts = 0;
     user.lockUntil = null;
     user.lastLoginAt = new Date();
     await user.save();
 
+    // isActive() check remains here — existing users logging in must be
+    // active. Pending users who haven't completed onboarding will hit this
+    // and receive ACCOUNT_INACTIVE, which the frontend routes to /onboarding.
     if (!user.isActive()) {
       throw new ApiError(403, "Account not active", [], "ACCOUNT_INACTIVE");
     }
 
-    // Session control
-    await this.enforceSessionLimit(user._id);
+    const { accessToken, refreshToken } = await this.createSession(user, meta);
 
-    const jti = this.generateJti();
-
-    const accessToken = this.generateAccessToken(user, jti);
-    const refreshToken = this.generateRefreshToken(user, jti);
-
-    const refreshTokenHash = await bcrypt.hash(refreshToken, 12);
-
-    await Session.create({
-      user: user._id,
-      jti,
-      refreshTokenHash,
-      userAgent: meta?.userAgent,
-      ipAddress: meta?.ip,
-      expiresAt: this.getExpiryDate(process.env.JWT_REFRESH_EXPIRY),
-    });
+    if (isFirstLogin) {
+      try {
+        await notificationService.createNotification({
+          user: user._id.toString(),
+          type: NOTIFICATION_TYPE.ACCOUNT_ACTION,
+          title: "Welcome to TAM",
+          message:
+            "Your membership is now active. Welcome to the TAM member portal. You can manage your profile, upload documents, and stay updated via this notifications feed.",
+          metadata: { action: "FIRST_LOGIN" },
+        });
+      } catch (_notifErr) {
+        // Welcome notification failure must never block login.
+      }
+    }
 
     return { user, accessToken, refreshToken };
   }
