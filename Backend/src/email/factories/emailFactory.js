@@ -2,7 +2,72 @@ import { renderBaseLayout } from "../layout/emailLayout.js";
 import documentApprovedTemplate from "../templates/documentApprovedTemplate.js";
 import documentRejectedTemplate from "../templates/documentRejectedTemplate.js";
 import broadcastTemplate from "../templates/broadcastTemplate.js";
-/* everything above unchanged */
+import accountApprovedTemplate from "../templates/accountApprovedTemplate.js";
+import accountSuspendedTemplate from "../templates/accountSuspendedTemplate.js";
+import accountReinstatedTemplate from "../templates/accountReinstatedTemplate.js";
+import passwordResetTemplate from "../templates/passwordResetTemplate.js";
+
+/* ─────────────────────────────────────────────
+   CONSTANTS & HELPERS
+───────────────────────────────────────────── */
+
+const DEFAULTS = Object.freeze({
+  brandName: "TAM",
+  maxSubjectLength: 998,
+  maxDocTypeLength: 200,
+  maxReasonLength: 500,
+  maxMessageLength: 10_000,
+});
+
+function normalizeTo(email) {
+  if (typeof email !== "string" || email.trim().length === 0) {
+    throw new TypeError(
+      `emailFactory: "userEmail" must be a non-empty string.`,
+    );
+  }
+  return email.trim().toLowerCase();
+}
+
+function assertNonEmptyString(value, field) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`emailFactory: "${field}" must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function assertMaxLength(value, field, max) {
+  if (value.length > max) {
+    throw new TypeError(
+      `emailFactory: "${field}" exceeds max length of ${max}.`,
+    );
+  }
+  return value;
+}
+
+function assertValidEmail(value, field) {
+  if (typeof value !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    throw new TypeError(
+      `emailFactory: "${field}" must be a valid email address.`,
+    );
+  }
+  return value.trim().toLowerCase();
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
+}
+
+function resolveLink(links, key) {
+  if (links && typeof links[key] === "string" && links[key].trim().length > 0) {
+    return links[key].trim();
+  }
+  return null;
+}
 
 /* ─────────────────────────────────────────────
    FACTORIES
@@ -188,6 +253,138 @@ export function buildBroadcastEmail({
   });
 
   const payload = { to, subject: finalSubject, html, text };
+  if (replyTo) payload.replyTo = assertValidEmail(replyTo, "replyTo");
+  return payload;
+}
+
+// Note: account status emails (approved/suspended/reinstated) are separate from document status emails because they have different templates and slightly different data needs — e.g. document emails require a documentType, while account emails do not. Keeping them separate also allows for more flexibility in the future if we want to add more account-related email types (e.g. account deletion, password reset) without overloading the document email factory with additional conditionals and parameters.
+
+export function buildAccountApprovedEmail({
+  userEmail,
+  links = {},
+  replyTo = null,
+  config = {},
+}) {
+  const cfg = { ...DEFAULTS, ...config };
+  const to = normalizeTo(userEmail);
+  const dashboardUrl = resolveLink(links, "dashboardUrl");
+
+  const {
+    subject,
+    html: htmlBody,
+    text,
+  } = accountApprovedTemplate({
+    dashboardUrl,
+    brandName: cfg.brandName,
+  });
+
+  assertMaxLength(subject, "subject", cfg.maxSubjectLength);
+
+  const html = renderBaseLayout({
+    title: subject,
+    bodyHtml: htmlBody,
+    preheader: "Your TAM membership has been approved",
+  });
+
+  const payload = { to, subject, html, text };
+  if (replyTo) payload.replyTo = assertValidEmail(replyTo, "replyTo");
+  return payload;
+}
+
+export function buildAccountSuspendedEmail({
+  userEmail,
+  replyTo = null,
+  config = {},
+}) {
+  const cfg = { ...DEFAULTS, ...config };
+  const to = normalizeTo(userEmail);
+
+  const {
+    subject,
+    html: htmlBody,
+    text,
+  } = accountSuspendedTemplate({
+    brandName: cfg.brandName,
+  });
+
+  assertMaxLength(subject, "subject", cfg.maxSubjectLength);
+
+  const html = renderBaseLayout({
+    title: subject,
+    bodyHtml: htmlBody,
+    preheader: "Your TAM account has been suspended",
+  });
+
+  const payload = { to, subject, html, text };
+  if (replyTo) payload.replyTo = assertValidEmail(replyTo, "replyTo");
+  return payload;
+}
+
+export function buildAccountReinstatedEmail({
+  userEmail,
+  links = {},
+  replyTo = null,
+  config = {},
+}) {
+  const cfg = { ...DEFAULTS, ...config };
+  const to = normalizeTo(userEmail);
+  const dashboardUrl = resolveLink(links, "dashboardUrl");
+
+  const {
+    subject,
+    html: htmlBody,
+    text,
+  } = accountReinstatedTemplate({
+    dashboardUrl,
+    brandName: cfg.brandName,
+  });
+
+  assertMaxLength(subject, "subject", cfg.maxSubjectLength);
+
+  const html = renderBaseLayout({
+    title: subject,
+    bodyHtml: htmlBody,
+    preheader: "Your TAM account has been reinstated",
+  });
+
+  const payload = { to, subject, html, text };
+  if (replyTo) payload.replyTo = assertValidEmail(replyTo, "replyTo");
+  return payload;
+}
+
+// Password reset emails are separate from account status emails because they have a different template and data needs (e.g. resetUrl), and because password resets are not necessarily tied to account approval/suspension/reinstatement events — e.g. a user could request a password reset while their account is still pending approval, or even after it's been suspended. Keeping password reset emails in their own factory allows for more flexibility and clearer separation of concerns.
+
+export function buildPasswordResetEmail({
+  userEmail,
+  resetUrl,
+  replyTo = null,
+  config = {},
+}) {
+  const cfg = { ...DEFAULTS, ...config };
+  const to = normalizeTo(userEmail);
+
+  if (typeof resetUrl !== "string" || resetUrl.trim().length === 0) {
+    throw new TypeError('emailFactory: "resetUrl" must be a non-empty string.');
+  }
+
+  const {
+    subject,
+    html: htmlBody,
+    text,
+  } = passwordResetTemplate({
+    resetUrl: resetUrl.trim(),
+    brandName: cfg.brandName,
+  });
+
+  assertMaxLength(subject, "subject", cfg.maxSubjectLength);
+
+  const html = renderBaseLayout({
+    title: subject,
+    bodyHtml: htmlBody,
+    preheader: "Reset your TAM account password",
+  });
+
+  const payload = { to, subject, html, text };
   if (replyTo) payload.replyTo = assertValidEmail(replyTo, "replyTo");
   return payload;
 }
