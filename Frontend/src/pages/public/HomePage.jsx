@@ -37,7 +37,7 @@ import {
 
 function FadeUp({ children, delay = 0, className = "" }) {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-80px" });
+  const inView = useInView(ref, { once: true, amount: 0.1 });
   const reduced = useReducedMotion();
 
   return (
@@ -59,7 +59,7 @@ function Counter({ to, suffix = "", duration = 2000 }) {
   const [count, setCount] = useState(0);
   const ref = useRef(null);
   const rafRef = useRef(null);
-  const inView = useInView(ref, { once: true });
+  const inView = useInView(ref, { once: true, amount: 0.1 });
   const reduced = useReducedMotion();
 
   useEffect(() => {
@@ -195,7 +195,7 @@ function HeroSection() {
             className="flex flex-wrap items-center gap-4"
           >
             <Link
-              to="/contact#membership"
+              to="/register"
               className="inline-flex items-center gap-2 px-7 py-3.5 rounded-lg bg-primary-500 text-white font-body font-semibold text-sm hover:bg-primary-600 transition-all duration-200 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950 shadow-lg shadow-primary-900/40"
             >
               Become a Member
@@ -659,28 +659,28 @@ function VisionMissionSection() {
 const MEMBERSHIP_STEPS = [
   {
     step: "01",
-    title: "Contact Secretariat",
-    desc: "Reach out to the TAM office in Lilongwe to express your interest.",
+    title: "Create Your Account",
+    desc: "Register on the TAM platform using your email address and secure password.",
   },
   {
     step: "02",
-    title: "Complete the Form",
-    desc: "Fill in the membership application form with your operator details.",
+    title: "Complete Your Profile",
+    desc: "Provide your business, fleet, and operator information through the onboarding dashboard.",
   },
   {
     step: "03",
-    title: "Submit Documents",
-    desc: "Provide required transport licenses, registration and compliance docs.",
+    title: "Upload Required Documents",
+    desc: "Submit your National ID, business registration, TIN certificate, and compliance documents securely online.",
   },
   {
     step: "04",
-    title: "Pay the Fee",
-    desc: "Complete the membership fee payment to activate your application.",
+    title: "Submit for Review",
+    desc: "Send your completed application to the TAM Secretariat for verification and compliance review.",
   },
   {
     step: "05",
-    title: "Get Verified",
-    desc: "TAM reviews and approves your membership. Welcome to the association.",
+    title: "Receive Approval & Access",
+    desc: "Once approved, gain full access to the TAM member portal, notifications, and association services.",
   },
 ];
 
@@ -743,7 +743,7 @@ function MembershipCTA() {
         <FadeUp>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
-              to="/contact#membership"
+              to="/register"
               className="inline-flex items-center gap-2 px-8 py-4 rounded-lg bg-primary-500 text-white font-body font-semibold hover:bg-primary-600 transition-all duration-200 active:scale-[0.97] shadow-lg shadow-primary-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950"
             >
               Start Your Application
