@@ -2,33 +2,27 @@
  * @file routes/notificationRoutes.js
  * @module routes
  *
- * Express router for member notification endpoints.
+ * FIX: Replaced validate() with validateQuery() on the GET feed route
+ * and validateParams() on all /:id routes.
  *
- * All routes are mounted at /api/v1/notifications (see app.js / index.js).
- * All routes require authentication via the protect middleware.
- * All routes are member-scoped — operations are restricted to req.user.id.
+ * Root cause: the shared validate() middleware calls safeParse(req.body).
+ * GET requests have no body — query params live in req.query and params
+ * in req.params. validate() was silently passing an empty object to Zod,
+ * so page/limit/status were never coerced and the controller received
+ * raw strings. This caused the 400 on the feed and made pagination break.
  *
- * Validation middleware:
- *  • notificationQuerySchema  — sanitises and coerces GET / query params
- *    (page, limit, status) before they reach the controller.
- *  • notificationParamsSchema — validates :id is a 24-char hex ObjectId
- *    on every parameterised route, preventing Mongoose CastErrors from
- *    surfacing as unhandled 500s on malformed requests.
- *
- * Route declaration order matters:
- *  • /unread-count and /read-all are declared before /:id/* to prevent
- *    the literal strings "unread-count" and "read-all" being captured
- *    as :id param values.
- *  • DELETE / (deleteAllNotifications) is declared before DELETE /:id
- *    for the same reason.
+ * validateQuery() and validateParams() are defined in notificationDto.js
+ * alongside the schemas they validate — keeping the validation logic and
+ * its middleware in the same file.
  */
 
 import { Router } from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { validate } from "../middleware/validateMiddleware.js";
 import {
   notificationQuerySchema,
   notificationParamsSchema,
+  validateQuery,
+  validateParams,
 } from "../dto/notificationDto.js";
 import {
   getMyNotifications,
@@ -46,18 +40,28 @@ const router = Router();
 router.use(protect);
 
 /* ── Static-segment routes (must precede /:id routes) ───────────────────── */
-router.get("/", validate(notificationQuerySchema), getMyNotifications);
+
+// GET /  — validateQuery coerces req.query (page, limit, status strings → typed values)
+router.get("/", validateQuery(notificationQuerySchema), getMyNotifications);
+
+// No query params to validate on these
 router.get("/unread-count", getUnreadCount);
 router.patch("/read-all", markAllAsRead);
 router.delete("/", deleteAllNotifications);
 
 /* ── Parameterised routes ────────────────────────────────────────────────── */
-router.patch("/:id/read", validate(notificationParamsSchema), markAsRead);
+
+// validateParams validates req.params.id as a 24-char hex ObjectId
+router.patch("/:id/read", validateParams(notificationParamsSchema), markAsRead);
 router.patch(
   "/:id/archive",
-  validate(notificationParamsSchema),
+  validateParams(notificationParamsSchema),
   archiveNotification,
 );
-router.delete("/:id", validate(notificationParamsSchema), deleteNotification);
+router.delete(
+  "/:id",
+  validateParams(notificationParamsSchema),
+  deleteNotification,
+);
 
 export default router;
