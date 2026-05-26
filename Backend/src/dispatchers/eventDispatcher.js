@@ -1,17 +1,15 @@
 /**
-
-
-* @file eventDispatcher.js
-* @module dispatchers
-*
-* Enterprise-grade event dispatch boundary.
-  */
+ * @file eventDispatcher.js
+ * @module dispatchers
+ *
+ * Enterprise-grade event dispatch boundary.
+ */
 
 import logger from "../utils/logger.js";
 import eventBus from "../utils/eventBus.js";
 
 /* ─────────────────────────────────────────────
-INTERNAL HELPERS
+   INTERNAL HELPERS
 ───────────────────────────────────────────── */
 
 function assertValidEvent(event) {
@@ -68,7 +66,7 @@ function buildLogContext(event) {
 }
 
 /* ─────────────────────────────────────────────
-DISPATCHER
+   DISPATCHER
 ───────────────────────────────────────────── */
 
 class EventDispatcher {
@@ -76,12 +74,11 @@ class EventDispatcher {
     Object.freeze(this);
   }
 
-  dispatch(event) {
+  async dispatch(event) {
     assertValidEvent(event);
 
     try {
-      // Emit ONLY payload (correct contract)
-      eventBus.emit(event.type, event.payload);
+      await eventBus.emitSafe(event.type, event.payload);
 
       logger.info("Domain event dispatched.", buildLogContext(event));
     } catch (error) {
@@ -94,7 +91,7 @@ class EventDispatcher {
     }
   }
 
-  dispatchMany(events) {
+  async dispatchMany(events) {
     if (!Array.isArray(events)) {
       throw new TypeError("eventDispatcher: `events` must be an array.");
     }
@@ -107,7 +104,7 @@ class EventDispatcher {
 
     for (const event of events) {
       try {
-        this.dispatch(event);
+        await this.dispatch(event);
       } catch (error) {
         failures.push(error);
       }
