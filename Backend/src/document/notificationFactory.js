@@ -131,7 +131,7 @@ function assertString(value, fieldName, maxLength) {
  */
 function buildDto({ userId, type, title, message, metadata }) {
   return Object.freeze({
-    userId,
+    user: userId,
     type,
     title,
     message,
