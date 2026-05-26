@@ -173,9 +173,8 @@ function ConfirmModal({ action, count, onConfirm, onClose, isPending }) {
 /* ─── Results panel ──────────────────────────────────────────────────────── */
 
 function ResultsPanel({ results, errors, onDismiss }) {
-  const successCount = results?.filter((r) => r.success)?.length ?? 0;
-  const failCount =
-    (results?.filter((r) => !r.success)?.length ?? 0) + (errors?.length ?? 0);
+  const successCount = results?.length ?? 0;
+  const failCount = errors?.length ?? 0;
 
   return (
     <div className="mb-5 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -314,11 +313,11 @@ export default function BulkReviewPage() {
     (reason) => {
       const documents = [...selected].map((key) => {
         const [userId, documentId] = key.split("-");
-        return { userId, documentId };
+        return { userId, docId: documentId };
       });
 
       bulkMutation.mutate({
-        action: confirmAction,
+        action: confirmAction === "approve" ? "approved" : "rejected",
         documents,
         ...(reason ? { reason } : {}),
       });
