@@ -77,6 +77,33 @@ const memberService = {
   updateProfile: (data) => api.patch("/members/profile", data),
 
   /**
+   * Upload or replace the member profile picture.
+   *
+   * Sends multipart/form-data containing a single image file.
+   *
+   * @param {File} file
+   * @returns {Promise<ApiResponse<Profile>>}
+   */
+  async uploadProfilePicture(file) {
+    const formData = new FormData();
+    formData.append("profilePicture", file);
+    const res = await api.post("/members/profile/picture", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return res.data ?? res;
+  },
+
+  /**
+   * Remove the current member profile picture.
+   *
+   * @returns {Promise<ApiResponse<Profile>>}
+   */
+  async removeProfilePicture() {
+    const res = await api.delete("/members/profile/picture");
+    return res.data ?? res;
+  },
+
+  /**
    * Upload one document file for the current member.
    * Sends multipart/form-data with the field name matching the
    * multer DOCUMENT_FIELDS config in cloudinaryUploadMiddleware.js.
