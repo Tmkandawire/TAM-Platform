@@ -9,10 +9,10 @@ import logger from "../utils/logger.js";
    CONFIG (CENTRALIZED)
 ------------------------- */
 const DOC_WEIGHTS = Object.freeze({
-  businessCert: 100,
-  tinCertificate: 100,
-  nationalId: 50,
-  passport: 50,
+  businessCert: 60,
+  tinCertificate: 30,
+  nationalId: 60,
+  passport: 60,
   utilityBill: 10,
 });
 
@@ -24,8 +24,8 @@ const STATUS_MULTIPLIER = Object.freeze({
 });
 
 const PRIORITY_LEVELS = Object.freeze({
-  HIGH: { label: "HIGH", threshold: 120 },
-  MEDIUM: { label: "MEDIUM", threshold: 50 },
+  HIGH: { label: "HIGH", threshold: 55 },
+  MEDIUM: { label: "MEDIUM", threshold: 25 },
   LOW: { label: "LOW", threshold: 0 },
 });
 
