@@ -77,13 +77,18 @@ function SectionLabel({ children, light = false }) {
 
 function PageHero() {
   return (
-    <section className="relative bg-gray-950 overflow-hidden">
+    <section className="relative bg-gray-950 overflow-hidden min-h-[500px]">
       {/* Background geometry */}
-      <div className="absolute inset-0">
-        <div
-          className="absolute top-0 left-0 w-[55%] h-full bg-primary-600"
-          style={{ clipPath: "polygon(0 0, 88% 0, 72% 100%, 0 100%)" }}
-        />
+      <div className="absolute inset-0 w-full h-full overflow-hidden">
+        {/* Match the pattern of other page heroes — glow only, no clip-path panel */}
+        <div className="absolute bottom-0 right-0 w-[480px] h-[480px] rounded-full bg-primary-600 opacity-15 blur-[140px] translate-x-1/4" />
+
+        <div className="absolute top-0 left-1/4 w-[280px] h-[280px] rounded-full bg-primary-600 opacity-10 blur-[100px]" />
+
+        {/* Red accent bar — left edge */}
+        <div className="absolute top-0 left-0 w-1 h-full bg-primary-500" />
+
+        {/* Dot texture */}
         <div
           className="absolute inset-0 opacity-[0.04]"
           style={{
@@ -92,24 +97,23 @@ function PageHero() {
             backgroundSize: "32px 32px",
           }}
         />
-        <div className="absolute bottom-0 right-0 w-[420px] h-[420px] rounded-full bg-secondary-600 opacity-10 blur-[140px]" />
       </div>
 
-      <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-28 lg:py-36">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
+      <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-28 lg:py-36">
+        <div className="grid lg:grid-cols-2 gap-16 items-center min-w-0">
           {/* Left — big editorial number */}
           <motion.div
             initial={{ opacity: 0, x: -40 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-            className="text-white"
+            className="text-white overflow-hidden min-w-0"
           >
             <p className="font-body text-sm font-medium text-primary-200 uppercase tracking-[0.2em] mb-6">
               Established
             </p>
             <div
               className="font-display font-bold text-white leading-none mb-4"
-              style={{ fontSize: "clamp(5rem, 14vw, 10rem)" }}
+              style={{ fontSize: "clamp(4rem, 20vw, 10rem)" }}
             >
               2003
             </div>
@@ -124,6 +128,7 @@ function PageHero() {
             initial={{ opacity: 0, y: 32 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="min-w-0"
           >
             <SectionLabel light>Who We Are</SectionLabel>
             <h1
@@ -426,7 +431,7 @@ function StakeholdersSection() {
   return (
     <section className="bg-gray-950 py-24 lg:py-32 overflow-hidden">
       {/* Background detail */}
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full bg-primary-600/5 blur-[120px]" />
       </div>
 
@@ -785,7 +790,7 @@ function CTAStrip() {
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
               <Link
-                to="/contact#membership"
+                to="/register"
                 className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white text-primary-600 font-body font-semibold text-sm hover:bg-primary-50 transition-all duration-200 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-500"
               >
                 Become a Member
