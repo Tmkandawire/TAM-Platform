@@ -39,17 +39,19 @@ export const getMyNotifications = asyncHandler(async (req, res) => {
     status: req.query.status,
   };
 
-  const notifications = await notificationService.getUserNotifications(
+  // getFeed returns paginated slice + accurate total count from DB
+  const { notifications, total } = await notificationService.getFeed(
     userId,
     options,
   );
 
-  const arr = Array.isArray(notifications) ? notifications : [];
-  const limit = options.limit ?? 20;
+  const safeLimit = Number(options.limit) || 20;
   const result = {
-    notifications: arr,
-    total: arr.length,
-    pages: Math.max(1, Math.ceil(arr.length / limit)),
+    notifications,
+    total,
+    page: Number(options.page) || 1,
+    limit: safeLimit,
+    pages: Math.max(1, Math.ceil(total / safeLimit)),
   };
 
   const response = ApiResponse.ok(result, "Notifications retrieved.");
@@ -125,12 +127,13 @@ export const archiveNotification = asyncHandler(async (req, res) => {
 export const deleteAllNotifications = asyncHandler(async (req, res) => {
   const userId = req.user.id.toString();
 
+  // Scoped to ARCHIVED only — never deletes unread or read notifications
   const deletedCount =
-    await notificationService.deleteAllUserNotifications(userId);
+    await notificationService.deleteAllArchivedByUser(userId);
 
   const response = ApiResponse.ok(
     { deletedCount },
-    `${deletedCount} notification(s) deleted.`,
+    `${deletedCount} archived notification(s) deleted.`,
   );
   return res.status(response.statusCode).json(response);
 });
