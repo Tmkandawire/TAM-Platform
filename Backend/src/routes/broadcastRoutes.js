@@ -95,6 +95,10 @@ router.post(
   "/",
   broadcastLimiter,
   auditAttempt(AUDIT_ACTIONS.BROADCAST_SENT, "broadcast"),
+  (req, _res, next) => {
+    req.body.createdByAdmin = req.user.id;
+    next();
+  },
   validate(broadcastSchema),
   sendBroadcast,
 );
