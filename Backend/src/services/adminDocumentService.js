@@ -3,23 +3,8 @@
  * @module services
  *
  * Enterprise-grade orchestration layer for document review workflows.
- *
- * Responsibilities
- * ─────────────────────────────────────────────────────────────
- *  • Coordinate workflow execution across repositories/policies
- *  • Orchestrate transactional boundaries
- *  • Coordinate audit creation
- *  • Coordinate event creation
- *  • Coordinate post-commit event dispatch
- *  • Handle bulk workflow orchestration
- *
- * This service intentionally does NOT:
- *  • contain Mongo query construction
- *  • directly mutate persistence models
- *  • perform raw database operations
- *  • contain persistence implementation details
  */
-
+import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { ValidationError } from "../errors/index.js";
 
@@ -41,6 +26,10 @@ import {
   createDocumentEvent,
   createBulkDocumentEvent,
 } from "../document/documentEventFactory.js";
+
+// FIX: eventDispatcher was referenced in #dispatchSafely but never imported,
+// causing a ReferenceError on every document action and review queue fetch.
+import eventDispatcher from "../dispatchers/eventDispatcher.js";
 
 class AdminDocumentService {
   /* ─────────────────────────────────────────
@@ -137,97 +126,163 @@ class AdminDocumentService {
   }) {
     let pendingEvent = null;
 
-    const result = await withMongoTransaction(async (session) => {
-      /*
-       * STEP 1
-       * Fetch review context
-       */
-      const reviewContext = await profileRepository.getDocumentForReview(
-        {
-          userId: targetUserId,
-          documentId,
-        },
-        session,
-      );
-
-      const { profile, document } = reviewContext;
-
-      /*
-       * STEP 2
-       * Policy validation
-       */
-      documentStatusPolicy.assertReviewAllowed({
-        document,
-        nextStatus: status,
-      });
-
-      /*
-       * STEP 3
-       * Persist workflow decision
-       */
-      const updatedProfile =
-        await profileRepository.applyDocumentReviewDecision(
+    const result = await withMongoTransaction(
+      mongoose.connection,
+      async (session) => {
+        const reviewContext = await profileRepository.getDocumentForReview(
           {
             userId: targetUserId,
             documentId,
-            status,
-            adminId,
-            reason,
           },
           session,
         );
 
-      /*
-       * STEP 4
-       * Persist audit trail
-       */
-      await auditLogRepository.create(
-        createDocumentAuditEntry({
+        const { profile, document } = reviewContext;
+
+        documentStatusPolicy.assertReviewAllowed({
+          document,
+          nextStatus: status,
+        });
+
+        const updatedProfile =
+          await profileRepository.applyDocumentReviewDecision(
+            {
+              userId: targetUserId,
+              documentId,
+              status,
+              adminId,
+              reason,
+            },
+            session,
+          );
+
+        // FIX: added "action: status" — factory requires "action", not "newStatus" alone
+        await auditLogRepository.create(
+          createDocumentAuditEntry({
+            adminId,
+            userId: targetUserId,
+            docId: documentId,
+            documentType: document.documentType,
+            action: status,
+            previousStatus: document.status,
+            newStatus: status,
+            reason,
+            ip,
+            userAgent,
+          }),
+          session,
+        );
+
+        // FIX: renamed "status" to "action" — event factory requires "action" field
+        pendingEvent = createDocumentEvent({
           adminId,
           userId: targetUserId,
-          documentId,
+          docId: documentId,
           documentType: document.documentType,
+          action: status,
+          reason,
+        });
+
+        logger.info("Document review completed.", {
+          adminId,
+          targetUserId,
+          documentId,
 
           previousStatus: document.status,
           newStatus: status,
+        });
 
-          reason,
-          ip,
-          userAgent,
-        }),
-        session,
-      );
+        return updatedProfile;
+      },
+    );
 
-      /*
-       * STEP 5
-       * Prepare post-commit event
-       */
-      pendingEvent = createDocumentEvent({
-        adminId,
-        userId: targetUserId,
-        documentId,
-        documentType: document.documentType,
-        status,
-        reason,
-      });
-
-      logger.info("Document review completed.", {
-        adminId,
-        targetUserId,
-        documentId,
-
-        previousStatus: document.status,
-        newStatus: status,
-      });
-
-      return updatedProfile;
-    });
-
-    /*
-     * STEP 6
-     * Dispatch AFTER commit succeeds
-     */
     this.#dispatchSafely(pendingEvent);
+
+    return result;
+  }
+
+  /* ─────────────────────────────────────────
+     REQUEST RESUBMISSION
+  ───────────────────────────────────────── */
+
+  async requestResubmission({
+    adminId,
+    targetUserId,
+    documentId,
+    reason,
+    documentsRequired,
+    ip = null,
+    userAgent = null,
+  }) {
+    const result = await withMongoTransaction(
+      mongoose.connection,
+      async (session) => {
+        const reviewContext = await profileRepository.getDocumentForReview(
+          {
+            userId: targetUserId,
+            documentId,
+          },
+          session,
+        );
+
+        const { document } = reviewContext;
+
+        const policy = documentStatusPolicy.validateResubmission({
+          document,
+          reason,
+          documentsRequired,
+        });
+
+        if (!policy.allowed) {
+          throw new ValidationError(policy.reason, policy.code);
+        }
+
+        const updatedProfile =
+          await profileRepository.applyDocumentResubmissionRequest(
+            {
+              userId: targetUserId,
+              docId: documentId,
+              adminId,
+              reason,
+              documentsRequired,
+            },
+            session,
+          );
+
+        // audit entry is correct — action: "resubmission_required" is valid
+        await auditLogRepository.create(
+          createDocumentAuditEntry({
+            adminId,
+            userId: targetUserId,
+            docId: documentId,
+            documentType: document.documentType,
+            action: "resubmission_required",
+            previousStatus: document.status,
+            newStatus: "resubmission_required",
+            reason,
+            documentsRequired,
+            ip,
+            userAgent,
+          }),
+          session,
+        );
+
+        // FIX: "resubmission_required" is not in the event factory's EVENT_MAP
+        // (only "approved" and "rejected" are supported). No event is dispatched
+        // for resubmission — pendingEvent stays null and #dispatchSafely is a no-op.
+
+        logger.info("Document resubmission requested.", {
+          adminId,
+          targetUserId,
+          documentId,
+          previousStatus: document.status,
+          newStatus: "resubmission_required",
+          documentsRequired,
+        });
+
+        return updatedProfile;
+      },
+    );
 
     return result;
   }
@@ -244,9 +299,6 @@ class AdminDocumentService {
     ip = null,
     userAgent = null,
   }) {
-    // Payload guard — the controller validates via DTO before this point,
-    // but the service enforces its own contract so it remains safe when
-    // called directly (e.g. from tests or future internal callers).
     if (!Array.isArray(documents) || documents.length === 0) {
       throw ValidationError.dto(
         "documents",
@@ -264,14 +316,11 @@ class AdminDocumentService {
       const pendingEvents = [];
 
       try {
-        await withMongoTransaction(async (session) => {
+        await withMongoTransaction(mongoose.connection, async (session) => {
           const reviewContext = await Promise.all(
-            documentIds.map((documentId) =>
+            documentIds.map((docId) =>
               profileRepository.findDocumentForReview(
-                {
-                  userId,
-                  documentId,
-                },
+                { userId, documentId: docId },
                 session,
               ),
             ),
@@ -279,13 +328,15 @@ class AdminDocumentService {
 
           const validDocuments = [];
 
-          for (const context of reviewContext) {
+          for (let i = 0; i < reviewContext.length; i++) {
+            const context = reviewContext[i];
+
             if (!context || !context.document) {
               errors.push({
                 userId,
+                docId: String(documentIds[i]),
                 code: "DOCUMENT_NOT_FOUND",
               });
-
               continue;
             }
 
@@ -296,12 +347,11 @@ class AdminDocumentService {
                 document,
                 nextStatus: action,
               });
-
               validDocuments.push(document);
             } catch (err) {
               errors.push({
                 userId,
-                documentId: String(document._id),
+                docId: String(document._id),
                 code: err.code || "INVALID_REVIEW",
                 message: err.message,
               });
@@ -312,15 +362,10 @@ class AdminDocumentService {
             return;
           }
 
-          /*
-           * Bulk persistence
-           */
           await profileRepository.applyBulkDocumentReviewDecision(
             {
               userId,
-
               documentIds: validDocuments.map((doc) => doc._id),
-
               status: action,
               adminId,
               reason,
@@ -328,20 +373,16 @@ class AdminDocumentService {
             session,
           );
 
-          /*
-           * Bulk audit persistence
-           */
+          // FIX: added "action" field — factory requires it, was missing before
           const auditEntries = validDocuments.map((document) =>
             createBulkDocumentAuditEntry({
               adminId,
               userId,
-
-              documentId: document._id,
+              docId: String(document._id),
               documentType: document.documentType,
-
+              action,
               previousStatus: document.status,
               newStatus: action,
-
               reason,
               ip,
               userAgent,
@@ -350,36 +391,28 @@ class AdminDocumentService {
 
           await auditLogRepository.createMany(auditEntries, session);
 
-          /*
-           * Prepare events
-           */
+          // FIX: renamed "status" to "action" — event factory requires "action" field
           for (const document of validDocuments) {
             pendingEvents.push(
               createBulkDocumentEvent({
                 adminId,
                 userId,
-
-                documentId: document._id,
+                docId: String(document._id),
                 documentType: document.documentType,
-
-                status: action,
+                action,
                 reason,
               }),
             );
 
             results.push({
               userId,
-              documentId: String(document._id),
-
+              docId: String(document._id),
               previousStatus: document.status,
               newStatus: action,
             });
           }
         });
 
-        /*
-         * Dispatch after commit
-         */
         this.#dispatchManySafely(pendingEvents);
       } catch (err) {
         logger.error("Bulk review transaction failed.", {
@@ -387,20 +420,21 @@ class AdminDocumentService {
           error: err.message,
         });
 
-        errors.push({
-          userId,
-          code: "BULK_TRANSACTION_FAILED",
-          message: err.message,
-        });
+        for (const documentId of documentIds) {
+          errors.push({
+            userId,
+            docId: String(documentId),
+            code: "BULK_TRANSACTION_FAILED",
+            message: err.message,
+          });
+        }
       }
     }
 
     return {
       total: documents.length,
-
       succeeded: results.length,
       failed: errors.length,
-
       results,
       errors,
     };
@@ -413,12 +447,12 @@ class AdminDocumentService {
   #groupDocumentsByUser(documents) {
     const grouped = new Map();
 
-    for (const { userId, documentId } of documents) {
+    for (const { userId, docId } of documents) {
       if (!grouped.has(userId)) {
         grouped.set(userId, []);
       }
 
-      grouped.get(userId).push(documentId);
+      grouped.get(userId).push(docId);
     }
 
     return grouped;
@@ -438,9 +472,7 @@ class AdminDocumentService {
   }
 
   #dispatchSafely(event) {
-    if (!event) {
-      return;
-    }
+    if (!event) return;
 
     try {
       eventDispatcher.dispatch(event);
@@ -452,9 +484,7 @@ class AdminDocumentService {
   }
 
   #dispatchManySafely(events) {
-    if (!Array.isArray(events) || events.length === 0) {
-      return;
-    }
+    if (!Array.isArray(events) || events.length === 0) return;
 
     for (const event of events) {
       this.#dispatchSafely(event);
