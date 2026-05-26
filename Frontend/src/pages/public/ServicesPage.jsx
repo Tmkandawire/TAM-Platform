@@ -1119,7 +1119,7 @@ function CTAStrip() {
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <Link
-                to="/contact#membership"
+                to="/register"
                 className="inline-flex items-center gap-2 px-6 py-3 rounded-lg border border-white/40 text-white font-body font-semibold text-sm hover:bg-white/10 transition-all duration-200 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-500"
               >
                 Join TAM
