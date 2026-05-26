@@ -322,7 +322,7 @@ export default function NavbarMobile({
                     aria-hidden="true"
                   />
                   <span className="text-[13px] font-semibold text-gray-500 uppercase tracking-widest">
-                    Navigation
+                    Menu
                   </span>
                 </div>
 
