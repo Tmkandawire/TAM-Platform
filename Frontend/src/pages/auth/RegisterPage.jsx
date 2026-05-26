@@ -254,14 +254,15 @@ export default function RegisterPage() {
             </p>
           </motion.div>
 
-          {/* Pending notice */}
+          {/* Onboarding notice */}
           <motion.div
             variants={itemVariants}
             className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200"
           >
             <p className="text-amber-800 text-sm font-medium">
-              📋 After registering, your application will be reviewed by the TAM
-              secretariat. You will be notified once your account is activated.
+              📋 After registering, you'll complete your business profile and
+              upload your documents. Your application is then reviewed by the
+              TAM secretariat before your account is activated.
             </p>
           </motion.div>
 
@@ -390,11 +391,11 @@ export default function RegisterPage() {
                 {isRegistering ? (
                   <>
                     <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Submitting application…
+                    Creating account…
                   </>
                 ) : (
                   <>
-                    Apply for Membership
+                    Create Account & Continue
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
