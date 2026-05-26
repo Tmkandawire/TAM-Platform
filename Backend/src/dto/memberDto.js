@@ -42,12 +42,16 @@ const documentSchema = z
       .refine(
         (val) => {
           try {
-            return new URL(val).hostname === "res.cloudinary.com";
+            const url = new URL(val);
+            return (
+              url.hostname === "res.cloudinary.com" &&
+              url.pathname.startsWith(`/${process.env.CLOUDINARY_CLOUD_NAME}/`)
+            );
           } catch {
             return false;
           }
         },
-        { message: "Document URL must be a valid Cloudinary URL" },
+        { message: "Document URL must be a valid TAM Cloudinary URL" },
       ),
 
     documentType: z.enum(DOCUMENT_TYPES, {
