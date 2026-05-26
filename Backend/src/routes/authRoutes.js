@@ -37,6 +37,8 @@ import {
   authRateLimiter,
   refreshLimiter,
   uploadRateLimiter,
+  forgotPasswordLimiter,
+  resetPasswordLimiter,
 } from "../middleware/rateLimitMiddleware.js";
 import { validate } from "../middleware/validateMiddleware.js";
 import { registerSchema, loginSchema } from "../dto/authDto.js";
@@ -47,6 +49,10 @@ import {
   postUploadValidation,
 } from "../middleware/cloudinaryUploadMiddleware.js";
 import { transformDocuments } from "../middleware/documentTransformMiddleware.js";
+import {
+  forgotPassword,
+  resetPassword,
+} from "../controllers/authController.js";
 
 const router = express.Router();
 
@@ -112,7 +118,7 @@ router.post("/logout", authRateLimiter, logout);
 /**
  * @route   GET /api/v1/auth/me
  */
-router.get("/me", protect, csrfProtection, me);
+router.get("/me", protect, me);
 
 /**
  * @route   POST /api/v1/auth/onboarding/complete
@@ -142,5 +148,10 @@ router.post(
   transformDocuments,
   completeOnboarding,
 );
+
+// Public routes — no auth required
+router.post("/forgot-password", forgotPasswordLimiter, forgotPassword);
+
+router.post("/reset-password", resetPasswordLimiter, resetPassword);
 
 export default router;
