@@ -424,45 +424,59 @@ class BroadcastService {
       session.endSession();
     }
 
-    // ── Email fan-out (post-commit, best-effort) ──────────────────
-    // Runs after the notification transaction commits — email failures
-    // never roll back persisted notifications. Recipients without a
-    // resolvable email are skipped and counted separately.
-    //
-    // Failures are collected across all batches and reflected in
-    // execution.email.failed and execution.totalRecipientsFailed.
-    // A non-zero failure count transitions the broadcast to PARTIALLY_FAILED
-    // so admins have actionable visibility into delivery coverage.
-    const { payloads: emailPayloads, skipped: emailSkipped } =
-      broadcastFactory.forAllEmailRecipients(
-        { title: safeTitle, subject: safeSubject, message: safeMessage },
+    // ── Respond immediately, finish email + status in background ──
+    // Email dispatch is intentionally outside the notification transaction: notifications are already committed and visible to users. Email is a best-effort delivery channel — failures here set PARTIALLY_FAILED on the broadcast record but do NOT roll back persisted notifications.
+    setImmediate(() => {
+      this.#finishBroadcast({
+        broadcastId,
         recipients,
-      );
+        safeTitle,
+        safeSubject,
+        safeMessage,
+        safeCreatedBy,
+        emailPayloads: broadcastFactory.forAllEmailRecipients(
+          { title: safeTitle, subject: safeSubject, message: safeMessage },
+          recipients,
+        ),
+        idempotencyKey: safeIdempotencyKey,
+      }).catch((err) => {
+        logger.error("BroadcastService: background finish failed.", {
+          broadcastId,
+          error: err.message,
+        });
+      });
+    });
 
+    return {
+      broadcastId,
+      recipientCount: recipients.length,
+      status: BROADCAST_STATUS.QUEUED,
+    };
+  }
+
+  async #finishBroadcast({
+    broadcastId,
+    recipients,
+    safeTitle,
+    safeSubject,
+    safeMessage,
+    safeCreatedBy,
+    emailPayloads,
+    idempotencyKey,
+  }) {
+    const { payloads, skipped: emailSkipped } = emailPayloads;
     let emailFailed = 0;
 
-    if (emailPayloads.length > 0) {
+    if (payloads.length > 0) {
       emailFailed = await dispatchBroadcastEmails(
-        emailPayloads,
+        payloads,
         MAX_BROADCAST_BATCH_SIZE,
         broadcastId,
       );
     }
 
-    if (emailSkipped > 0) {
-      logger.warn(
-        "BroadcastService: some recipients skipped for email — no email address resolved.",
-        { broadcastId, skipped: emailSkipped },
-      );
-    }
-
-    const emailSent = emailPayloads.length - emailFailed;
+    const emailSent = payloads.length - emailFailed;
     const hasEmailFailures = emailFailed > 0;
-
-    // ── Post-commit: update counters + final status ───────────────
-    // PARTIALLY_FAILED when any email dispatch failed — notifications
-    // are already committed and visible. SENT only when all emails
-    // dispatched without error (skipped recipients are not failures).
     const finalStatus = hasEmailFailures
       ? BROADCAST_STATUS.PARTIALLY_FAILED
       : BROADCAST_STATUS.SENT;
@@ -485,34 +499,26 @@ class BroadcastService {
               changedAt: new Date(),
               changedByAdmin: safeCreatedBy,
               note: hasEmailFailures
-                ? `Notifications sent to ${recipients.length} recipients. Email delivery partially failed: ${emailFailed} failed, ${emailSent} sent, ${emailSkipped} skipped (no address).`
-                : `Sent to ${recipients.length} recipients. Email delivered to ${emailSent} (${emailSkipped} skipped — no address).`,
+                ? `Notifications sent to ${recipients.length} recipients. Email partially failed: ${emailFailed} failed, ${emailSent} sent, ${emailSkipped} skipped.`
+                : `Sent to ${recipients.length} recipients. Email delivered to ${emailSent} (${emailSkipped} skipped).`,
             },
           },
         });
-
-        if (!updated) {
-          throw new Error(
-            `Broadcast ${broadcastId} not found during ${finalStatus} update.`,
-          );
-        }
+        if (!updated) throw new Error(`Broadcast ${broadcastId} not found.`);
       },
       STATUS_UPDATE_MAX_RETRIES,
       `BroadcastService: ${finalStatus} status update`,
     );
 
-    // Audit — action reflects actual delivery outcome
-    const auditAction = hasEmailFailures
-      ? AUDIT_ACTIONS.BROADCAST_PARTIALLY_FAILED
-      : AUDIT_ACTIONS.BROADCAST_SENT;
-
     await auditService.log({
-      action: auditAction,
+      action: hasEmailFailures
+        ? AUDIT_ACTIONS.BROADCAST_PARTIALLY_FAILED
+        : AUDIT_ACTIONS.BROADCAST_SENT,
       actorId: safeCreatedBy,
-      targetId: broadcast._id,
+      targetId: broadcastId,
       targetType: "broadcast",
       metadata: {
-        idempotencyKey: safeIdempotencyKey,
+        idempotencyKey,
         recipientCount: recipients.length,
         emailSent,
         emailFailed,
@@ -523,22 +529,11 @@ class BroadcastService {
 
     logger.info("BroadcastService: broadcast completed.", {
       broadcastId,
-      idempotencyKey: safeIdempotencyKey,
       recipientCount: recipients.length,
       emailSent,
       emailFailed,
-      emailSkipped,
       status: finalStatus,
     });
-
-    return {
-      broadcastId,
-      recipientCount: recipients.length,
-      emailSent,
-      emailFailed,
-      emailSkipped,
-      status: finalStatus,
-    };
   }
 
   async #resolveAudience(audienceType, filters, sendToAllUsers) {
