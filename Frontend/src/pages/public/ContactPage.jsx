@@ -26,6 +26,7 @@
  */
 
 import { useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { motion, useInView, useReducedMotion } from "framer-motion";
 import {
   MapPin,
@@ -53,7 +54,7 @@ import {
 const FacebookIcon = Share2;
 const TwitterIcon = Share2;
 const LinkedinIcon = Share2;
-// react-router-dom Link not used — all CTAs on this page use native <a> or href anchors
+// react-router-dom Link used for internal TAM platform navigation
 import { cn } from "../../utils/cn";
 
 // ─── Shared primitives ────────────────────────────────────────────────────────
@@ -512,7 +513,7 @@ function ContactForm() {
        * Replace this endpoint with your actual server route or
        * serverless function URL (e.g. /api/send-email, /.netlify/functions/contact).
        */
-      const response = await fetch("/api/contact", {
+      const response = await fetch("/api/v1/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
@@ -799,38 +800,38 @@ function ContactBody() {
 
 /**
  * Membership steps — this section is the #membership anchor target.
- * Every "Join TAM" CTA button across the site links to /contact#membership.
+ * Every "Join TAM" CTA button across the site links to / register page.
  */
 const MEMBERSHIP_STEPS = [
   {
     number: "01",
-    title: "Contact the Secretariat",
+    title: "Create Your Account",
     description:
-      "Reach out via the form above or call/email directly to express your interest in joining TAM.",
+      "Register on the TAM platform using your email address and secure password.",
   },
   {
     number: "02",
-    title: "Complete the Application Form",
+    title: "Complete Your Profile",
     description:
-      "The Secretariat will provide the membership application form for you to complete.",
+      "Provide your business, fleet, and operator information through the onboarding dashboard.",
   },
   {
     number: "03",
-    title: "Submit Required Documents",
+    title: "Upload Required Documents",
     description:
-      "Provide your business registration certificate, RTSS licence, and operator documentation.",
+      "Submit your National ID, business registration, TIN certificate, and compliance documents securely online.",
   },
   {
     number: "04",
-    title: "Pay the Membership Fee",
+    title: "Submit for Review",
     description:
-      "Pay the applicable annual membership fee as advised by the Secretariat.",
+      "Send your completed application to the TAM Secretariat for verification and compliance review.",
   },
   {
     number: "05",
-    title: "Get Verified & Start Benefiting",
+    title: "Receive Approval & Access",
     description:
-      "Once verified, you gain full member access — fleet pooling, invoicing, insurance, and advocacy.",
+      "Once approved, gain full access to the TAM member portal, notifications, and association services.",
   },
 ];
 
@@ -902,19 +903,8 @@ function MembershipCTA() {
         {/* Bottom CTAs */}
         <FadeUp delay={0.35}>
           <div className="flex flex-col sm:flex-row items-center gap-4">
-            <a
-              href="#contact-form"
-              onClick={(e) => {
-                /*
-                 * Smooth-scroll to the form. If the browser supports
-                 * scrollIntoView we use it; otherwise href="#contact-form"
-                 * falls back to native anchor navigation.
-                 */
-                e.preventDefault();
-                document
-                  .getElementById("contact-form")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
+            <Link
+              to="/register"
               className={cn(
                 "inline-flex items-center gap-2 px-6 py-3 rounded-xl",
                 "bg-secondary-500 text-white font-body font-semibold text-sm",
@@ -925,7 +915,7 @@ function MembershipCTA() {
             >
               Start Your Application
               <ArrowRight className="w-4 h-4" />
-            </a>
+            </Link>
             <a
               href="tel:+265891003936"
               className={cn(
