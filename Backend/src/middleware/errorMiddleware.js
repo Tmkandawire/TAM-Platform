@@ -104,7 +104,12 @@ function normalizeFrameworkError(err) {
   }
 
   // ── Mongoose: schema-level validation failure ────────────────────────────
-  if (err.name === "ValidationError" && err.errors) {
+  if (
+    err.name === "ValidationError" &&
+    err.errors &&
+    !(err instanceof ValidationError) &&
+    !isApiError(err)
+  ) {
     const errors = Object.values(err.errors).map((e) => ({
       field: e.path,
       message: e.message,
@@ -196,8 +201,12 @@ const errorMiddleware = (err, req, res, next) => {
         retryable: error.retryable,
       }),
     });
-  } else {
+  } else if (error.statusCode >= 500) {
     logger.error(error.message, logPayload);
+  } else if (error.statusCode >= 400) {
+    logger.warn(error.message, logPayload);
+  } else {
+    logger.info(error.message, logPayload);
   }
 
   /* ── Step 3: Canonical response ──────────────────────────────────────────
@@ -224,7 +233,10 @@ const errorMiddleware = (err, req, res, next) => {
       }),
     },
     requestId,
-    ...(isProd === false && { stack: err?.stack }),
+
+    ...(process.env.EXPOSE_STACK === "true" && {
+      stack: err?.stack,
+    }),
   });
 };
 
