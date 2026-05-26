@@ -38,7 +38,7 @@ const userSchema = new mongoose.Schema(
       //               Kept separate to support reporting, reapplication flows,
       //               and notification routing without ambiguity.
       // "suspended" — previously active, access revoked by admin.
-      enum: ["pending", "active", "suspended", "rejected"],
+      enum: ["pending", "active", "suspended", "rejected", "deleted"],
       default: "pending",
       index: true,
     },
@@ -80,6 +80,11 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
 
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+
     lockUntil: {
       type: Date,
       default: null,
@@ -95,7 +100,20 @@ const userSchema = new mongoose.Schema(
     notificationPreferences: {
       documentUpdates: { type: Boolean, default: true },
       accountAlerts: { type: Boolean, default: true },
-      broadcasts: { type: Boolean, default: false },
+      broadcasts: { type: Boolean, default: true },
+    },
+
+    // Password reset
+    passwordResetToken: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
+    passwordResetExpires: {
+      type: Date,
+      default: null,
+      select: false,
     },
 
     isDeleted: {
@@ -122,6 +140,7 @@ userSchema.index({ email: 1, isDeleted: 1 });
 ------------------------- */
 
 userSchema.pre(/^find/, function () {
+  if (this.getOptions().includeDeleted) return;
   this.where({ isDeleted: false });
 });
 
@@ -150,9 +169,21 @@ userSchema.methods.isLocked = function () {
 
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
+
+  // Sensitive auth/security fields
   delete obj.password;
+  delete obj.passwordResetToken;
+  delete obj.passwordResetExpires;
+  delete obj.tokenVersion;
+
+  // Internal security state
   delete obj.loginAttempts;
   delete obj.lockUntil;
+
+  // Optional admin workflow metadata
+  delete obj.approvedBy;
+  delete obj.rejectedBy;
+
   return obj;
 };
 
