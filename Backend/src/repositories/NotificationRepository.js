@@ -82,6 +82,21 @@ function deepFreezeClone(value) {
     return value;
   }
 
+  // BSON ObjectId — serialize to hex string
+  if (typeof value.toHexString === "function") {
+    return value.toHexString();
+  }
+
+  // BSON Binary / Buffer-backed types — serialize to hex string
+  if (typeof value.toString === "function" && value._bsontype !== undefined) {
+    return value.toString("hex");
+  }
+
+  // Native Date — return as-is (JSON.stringify handles it correctly)
+  if (value instanceof Date) {
+    return value;
+  }
+
   if (Array.isArray(value)) {
     return Object.freeze(value.map((item) => deepFreezeClone(item)));
   }
@@ -288,6 +303,28 @@ export class NotificationRepository {
   }
 
   /**
+   * Returns total notification count for a user, optionally filtered by status.
+   * Used by the feed controller to build accurate pagination metadata.
+   *
+   * @param {string} userId
+   * @param {string} [status]
+   * @param {import("mongoose").ClientSession} [session]
+   * @returns {Promise<number>}
+   */
+  async countByUser(userId, status, session) {
+    assertValidObjectId(userId, "userId");
+
+    const query = { user: userId };
+
+    if (status !== undefined) {
+      assertValidStatus(status);
+      query.status = status;
+    }
+
+    return Notification.countDocuments(query, buildQueryOptions(session));
+  }
+
+  /**
    * Returns unread notification count for a user.
    *
    * Session is forwarded to ensure consistent reads inside transactions.
@@ -329,7 +366,7 @@ export class NotificationRepository {
         notificationId,
         { $set: { status: NOTIFICATION_STATUS.READ } },
         {
-          new: true,
+          returnDocument: "after",
           runValidators: true,
           ...buildQueryOptions(session),
         },
@@ -383,7 +420,7 @@ export class NotificationRepository {
         notificationId,
         { $set: { status: NOTIFICATION_STATUS.ARCHIVED } },
         {
-          new: true,
+          returnDocument: "after",
           runValidators: true,
           ...buildQueryOptions(session),
         },
@@ -415,6 +452,25 @@ export class NotificationRepository {
     );
 
     assertFound(result, notificationId);
+  }
+
+  /**
+   * Deletes all ARCHIVED notifications for a user.
+   * Scoped to ARCHIVED only — never touches UNREAD or READ notifications.
+   *
+   * @param {string} userId
+   * @param {import("mongoose").ClientSession} [session]
+   * @returns {Promise<{ deletedCount: number }>}
+   */
+  async deleteArchivedByUser(userId, session) {
+    assertValidObjectId(userId, "userId");
+
+    const result = await Notification.deleteMany(
+      { user: userId, status: NOTIFICATION_STATUS.ARCHIVED },
+      buildQueryOptions(session),
+    );
+
+    return Object.freeze({ deletedCount: result.deletedCount });
   }
 
   /**
