@@ -84,6 +84,11 @@ export const ADMIN_QUERY_KEYS = {
     all: ["admin", "broadcasts"],
   },
 
+  notifications: {
+    all: ["admin", "notifications"],
+    list: (params = {}) => ["admin", "notifications", "list", params],
+  },
+
   // ── Dashboard convenience keys ─────────────────────────────────────────────
   // Stable (no params) keys used by the dashboard for independent queries.
   // These are separate from the parameterised keys above so the dashboard
@@ -273,6 +278,15 @@ const adminService = {
    * @returns {Promise<ApiResponse<BroadcastResult>>}
    */
   sendBroadcast: (payload) => api.post("/admin/broadcasts", payload),
+
+  /* ── Notifications ─────────────────────────────────────────────────────── */
+
+  getNotifications: (params = {}) =>
+    api.get("/admin/notifications", { params }),
+
+  deleteNotification: (id) => api.delete(`/admin/notifications/${id}`),
+
+  resendNotification: (id) => api.post(`/admin/notifications/${id}/resend`),
 };
 
 export default adminService;
