@@ -4,27 +4,33 @@
  *
  * Application router — React Router v6 data router.
  *
- * Route structure:
+ * Route access matrix:
  *
- *   /                     PublicLayout
- *   /about                PublicLayout
- *   /services             PublicLayout
- *   /contact              PublicLayout
- *   /login                standalone
- *   /register             standalone
- *   /member/*             ProtectedRoute (role: member) → MemberLayout
- *     /member/dashboard
- *     /member/profile
- *     /member/documents
- *     /member/notifications
- *     /member/settings
- *   * → /
+ *  /                    Public — no auth required
+ *  /about               Public
+ *  /services            Public
+ *  /contact             Public
+ *  /login               Public (redirect to dashboard if already active)
+ *  /register            Public
  *
- * Auth guards:
- *  - ProtectedRoute checks isHydrated before rendering to prevent
- *    flash-redirects on page reload.
- *  - requiredRole="member" redirects admins to /admin/dashboard
- *    and unauthenticated users to /login with `from` state preserved.
+ *  /onboarding          Auth required, active NOT required (requireActive=false)
+ *                       Pending users must be able to reach this page.
+ *
+ *  /pending             Auth required, active NOT required (requireActive=false)
+ *                       Pending users waiting for admin approval land here.
+ *
+ *  /member/*            Auth required + status === "active" (requireActive=true)
+ *                       Pending users are redirected to /pending.
+ *
+ *  /admin/*             Auth required + role === "admin"
+ *
+ *  Admin route map:
+ *    /admin/dashboard              → DashboardPage
+ *    /admin/members                → MembersPage (pending member list)
+ *    /admin/members/:id            → MemberDetailPage (full profile + documents)
+ *    /admin/documents              → DocumentsPage (full document queue)
+ *    /admin/documents/:userId/:docId → DocumentDetailPage (single doc review)
+ *    /admin/broadcast              → BroadcastPage (compose + send)
  */
 
 import {
@@ -38,6 +44,7 @@ import PageLoader from "../components/common/PageLoader.jsx";
 /* ── Layouts ─────────────────────────────────────────────────────────────── */
 import PublicLayout from "../components/layout/PublicLayout.jsx";
 import MemberLayout from "../components/layout/MemberLayout.jsx";
+import AdminLayout from "../components/layout/AdminLayout.jsx";
 
 /* ── Auth guard ──────────────────────────────────────────────────────────── */
 import ProtectedRoute from "../components/common/ProtectedRoute.jsx";
@@ -51,6 +58,14 @@ const ContactPage = lazy(() => import("../pages/public/ContactPage.jsx"));
 /* ── Auth pages ──────────────────────────────────────────────────────────── */
 const LoginPage = lazy(() => import("../pages/auth/LoginPage.jsx"));
 const RegisterPage = lazy(() => import("../pages/auth/RegisterPage.jsx"));
+const OnboardingPage = lazy(() => import("../pages/auth/OnboardingPage.jsx"));
+const PendingPage = lazy(() => import("../pages/auth/PendingPage.jsx"));
+const ForgotPasswordPage = lazy(
+  () => import("../pages/auth/ForgotPasswordPage.jsx"),
+);
+const ResetPasswordPage = lazy(
+  () => import("../pages/auth/ResetPasswordPage.jsx"),
+);
 
 /* ── Member pages ────────────────────────────────────────────────────────── */
 const MemberDashboardPage = lazy(
@@ -67,6 +82,31 @@ const MemberSettingsPage = lazy(
   () => import("../pages/member/SettingsPage.jsx"),
 );
 
+/* ── Admin pages ─────────────────────────────────────────────────────────── */
+const AdminDashboardPage = lazy(
+  () => import("../pages/admin/DashboardPage.jsx"),
+);
+const AdminMembersPage = lazy(() => import("../pages/admin/MembersPage.jsx"));
+const AdminMemberDetailPage = lazy(
+  () => import("../pages/admin/MemberDetailPage.jsx"),
+);
+const AdminDocumentsPage = lazy(
+  () => import("../pages/admin/DocumentsPage.jsx"),
+);
+const AdminDocumentDetailPage = lazy(
+  () => import("../pages/admin/DocumentDetailPage.jsx"),
+);
+const AdminBroadcastPage = lazy(
+  () => import("../pages/admin/BroadcastPage.jsx"),
+);
+const AdminNotificationsPage = lazy(
+  () => import("../pages/admin/AdminNotificationsPage.jsx"),
+);
+const AdminInboxPage = lazy(() => import("../pages/admin/AdminInboxPage.jsx"));
+const AuditLogsPage = lazy(() => import("../pages/admin/AuditLogsPage.jsx"));
+
+const BulkReviewPage = lazy(() => import("../pages/admin/BulkReviewPage.jsx"));
+
 /* ── Shared suspense wrapper ─────────────────────────────────────────────── */
 const withSuspense = (Page) => (
   <Suspense fallback={<PageLoader />}>
@@ -76,7 +116,7 @@ const withSuspense = (Page) => (
 
 /* ── Router ──────────────────────────────────────────────────────────────── */
 const router = createBrowserRouter([
-  /* ── Public routes — Navbar + Footer via PublicLayout ─────────────────── */
+  /* ── Public routes ─────────────────────────────────────────────────────── */
   {
     element: <PublicLayout />,
     children: [
@@ -87,37 +127,95 @@ const router = createBrowserRouter([
     ],
   },
 
-  /* ── Auth routes — standalone, no Navbar/Footer ────────────────────────── */
+  /* ── Auth routes (no session required) ─────────────────────────────────── */
   { path: "/login", element: withSuspense(LoginPage) },
   { path: "/register", element: withSuspense(RegisterPage) },
+  { path: "/forgot-password", element: withSuspense(ForgotPasswordPage) },
+  { path: "/reset-password", element: withSuspense(ResetPasswordPage) },
 
-  /* ── Member portal — auth-gated, role: member ──────────────────────────── */
+  /* ── Onboarding — auth required, active status NOT required ─────────────── */
   {
-    element: (
-      <ProtectedRoute requiredRole="member">
-        <MemberLayout />
-      </ProtectedRoute>
-    ),
+    element: <ProtectedRoute requireActive={false} />,
+    children: [
+      { path: "/onboarding", element: withSuspense(OnboardingPage) },
+      { path: "/pending", element: withSuspense(PendingPage) },
+    ],
+  },
+
+  /* ── Member portal — auth required + status must be "active" ───────────── */
+  {
+    element: <ProtectedRoute requiredRole="member" requireActive={true} />,
     children: [
       {
-        path: "/member/dashboard",
-        element: withSuspense(MemberDashboardPage),
+        element: <MemberLayout />,
+        children: [
+          {
+            path: "/member/dashboard",
+            element: withSuspense(MemberDashboardPage),
+          },
+          {
+            path: "/member/profile",
+            element: withSuspense(MemberProfilePage),
+          },
+          {
+            path: "/member/documents",
+            element: withSuspense(MemberDocumentsPage),
+          },
+          {
+            path: "/member/notifications",
+            element: withSuspense(MemberNotificationsPage),
+          },
+          {
+            path: "/member/settings",
+            element: withSuspense(MemberSettingsPage),
+          },
+        ],
       },
+    ],
+  },
+
+  /* ── Admin portal ───────────────────────────────────────────────────────── */
+  {
+    element: <ProtectedRoute requiredRole="admin" />,
+    children: [
       {
-        path: "/member/profile",
-        element: withSuspense(MemberProfilePage),
-      },
-      {
-        path: "/member/documents",
-        element: withSuspense(MemberDocumentsPage),
-      },
-      {
-        path: "/member/notifications",
-        element: withSuspense(MemberNotificationsPage),
-      },
-      {
-        path: "/member/settings",
-        element: withSuspense(MemberSettingsPage),
+        element: <AdminLayout />,
+        children: [
+          {
+            path: "/admin/dashboard",
+            element: withSuspense(AdminDashboardPage),
+          },
+          {
+            path: "/admin/members",
+            element: withSuspense(AdminMembersPage),
+          },
+          {
+            path: "/admin/members/:id",
+            element: withSuspense(AdminMemberDetailPage),
+          },
+          {
+            path: "/admin/documents",
+            element: withSuspense(AdminDocumentsPage),
+          },
+          {
+            path: "/admin/documents/:userId/:docId",
+            element: withSuspense(AdminDocumentDetailPage),
+          },
+          {
+            path: "/admin/broadcast",
+            element: withSuspense(AdminBroadcastPage),
+          },
+          {
+            path: "/admin/notifications",
+            element: withSuspense(AdminNotificationsPage),
+          },
+          {
+            path: "/admin/inbox",
+            element: withSuspense(AdminInboxPage),
+          },
+          { path: "/admin/audit-logs", element: withSuspense(AuditLogsPage) },
+          { path: "/admin/bulk-review", element: withSuspense(BulkReviewPage) },
+        ],
       },
     ],
   },
