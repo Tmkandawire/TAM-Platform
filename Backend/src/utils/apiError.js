@@ -1,32 +1,36 @@
 class ApiError extends Error {
-  constructor({
-    statusCode = 500,
-    message = "Something went wrong",
-    code = "INTERNAL_ERROR",
-    errors = [],
-    isOperational = true,
-    cause = null,
-  } = {}) {
-    super(message, { cause });
+  constructor(statusCodeOrOptions = {}, message, errors = [], code) {
+    const opts =
+      typeof statusCodeOrOptions === "object"
+        ? statusCodeOrOptions
+        : {
+            statusCode: statusCodeOrOptions,
+            message,
+            errors,
+            code,
+          };
+
+    const {
+      statusCode = 500,
+      message: msg = "Something went wrong",
+      code: errorCode = "INTERNAL_ERROR",
+      errors: errorList = [],
+      isOperational = true,
+      cause = null,
+    } = opts;
+
+    super(msg, { cause });
 
     this.name = this.constructor.name;
-
     this.statusCode = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
-
-    this.code = code;
-    this.errors = errors;
+    this.code = errorCode;
+    this.errors = errorList;
     this.isOperational = isOperational;
-
-    // Safe message for clients (prevents leaking internals)
-    this.clientMessage =
-      this.statusCode >= 500 ? "Internal server error" : message;
+    this.clientMessage = this.statusCode >= 500 ? "Internal server error" : msg;
 
     Error.captureStackTrace(this, this.constructor);
   }
 
-  /**
-   * What gets sent to the client
-   */
   toJSON() {
     return {
       success: false,
