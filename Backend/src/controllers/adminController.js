@@ -238,6 +238,94 @@ export const suspendMember = asyncHandler(async (req, res) => {
   return res.status(response.statusCode).json(response);
 });
 
+export const getMembers = asyncHandler(async (req, res) => {
+  const { status } = req.query;
+
+  const page = coercePaginationParam(req.query.page, {
+    defaultValue: DEFAULT_PAGE,
+    min: 1,
+    max: MAX_PAGE,
+    fieldName: "page",
+  });
+
+  const limit = coercePaginationParam(req.query.limit, {
+    defaultValue: DEFAULT_LIMIT,
+    min: 1,
+    max: MAX_LIMIT,
+    fieldName: "limit",
+  });
+
+  const { data, pagination } = await adminService.getMembers({
+    status,
+    page,
+    limit,
+  });
+
+  if (data.length === 0) {
+    const response = ApiResponse.empty(
+      { page: pagination.page, limit },
+      "No members found.",
+    );
+    return res.status(response.statusCode).json(response);
+  }
+
+  const response = ApiResponse.paginated(
+    data,
+    { total: pagination.total, page: pagination.page, limit },
+    "Members retrieved successfully.",
+  );
+  return res.status(response.statusCode).json(response);
+});
+
+export const reinstateMember = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.id, "id");
+
+  await adminService.reinstateMember(
+    req.params.id,
+    req.user.id,
+    buildReqInfo(req),
+  );
+
+  const response = ApiResponse.ok(null, "Member reinstated successfully.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const softDeleteMember = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.id, "id");
+
+  const { reason } = req.body;
+  assertValidReason(reason);
+
+  await adminService.softDeleteMember(
+    req.params.id,
+    reason.trim(),
+    req.user.id,
+    buildReqInfo(req),
+  );
+
+  const response = ApiResponse.ok(null, "Member moved to deleted.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const hardDeleteMember = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.id, "id");
+
+  await adminService.hardDeleteMember(
+    req.params.id,
+    req.user.id,
+    buildReqInfo(req),
+  );
+
+  const response = ApiResponse.ok(null, "Member permanently deleted.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const getMemberStats = asyncHandler(async (req, res) => {
+  const stats = await adminService.getMemberStats();
+  const response = ApiResponse.ok(stats, "Member stats retrieved.");
+  return res.status(response.statusCode).json(response);
+});
+
 export const approveDocument = asyncHandler(async (req, res) => {
   assertValidObjectId(req.params.userId, "userId");
   assertValidObjectId(req.params.docId, "docId");
@@ -289,5 +377,44 @@ export const requestResubmission = asyncHandler(async (req, res) => {
   );
 
   const response = ApiResponse.ok(null, "Resubmission requested.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const getAdminNotifications = asyncHandler(async (req, res) => {
+  const page = coercePaginationParam(req.query.page, {
+    defaultValue: 1,
+    min: 1,
+    max: MAX_PAGE,
+    fieldName: "page",
+  });
+  const limit = coercePaginationParam(req.query.limit, {
+    defaultValue: DEFAULT_LIMIT,
+    min: 1,
+    max: MAX_LIMIT,
+    fieldName: "limit",
+  });
+  const { type, read } = req.query;
+
+  const result = await adminService.getNotifications({
+    page,
+    limit,
+    type,
+    read,
+  });
+  const response = ApiResponse.ok(result, "Notifications retrieved.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const deleteAdminNotification = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.id, "id");
+  await adminService.deleteNotification(req.params.id);
+  const response = ApiResponse.ok(null, "Notification deleted.");
+  return res.status(response.statusCode).json(response);
+});
+
+export const resendAdminNotification = asyncHandler(async (req, res) => {
+  assertValidObjectId(req.params.id, "id");
+  await adminService.resendAdminNotification(req.params.id, req.user.id);
+  const response = ApiResponse.ok(null, "Notification resent.");
   return res.status(response.statusCode).json(response);
 });
