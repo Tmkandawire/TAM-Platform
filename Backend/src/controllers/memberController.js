@@ -7,6 +7,9 @@ import { profileSchema, updateProfileSchema } from "../dto/memberDto.js";
 import { normalizeDocuments } from "../utils/normalizeDocuments.js";
 import { ValidationError } from "../errors/index.js";
 import logger from "../utils/logger.js";
+import Profile from "../models/Profile.js";
+import { v2 as cloudinary } from "cloudinary";
+import { NotFoundError } from "../errors/index.js";
 
 /**
  * @desc    Create Member Profile (JSON Only)
@@ -134,6 +137,79 @@ export const updateProfile = asyncHandler(async (req, res) => {
     updatedProfile,
     "Profile updated successfully.",
   );
+  return res.status(response.statusCode).json(response);
+});
+
+/**
+ * @desc    Upload or replace profile picture
+ * @route   POST /api/v1/members/profile/picture
+ */
+export const updateProfilePicture = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { secure_url, public_id } = req.cloudinaryResult;
+
+  const profile = await Profile.findOne({ user: userId });
+
+  if (!profile) {
+    throw NotFoundError.profile(userId);
+  }
+
+  // Delete previous image if it exists
+  if (profile.profilePicturePublicId) {
+    try {
+      await cloudinary.uploader.destroy(profile.profilePicturePublicId);
+    } catch (err) {
+      logger.warn("Failed to delete old profile picture from Cloudinary", {
+        publicId: profile.profilePicturePublicId,
+        error: err.message,
+      });
+    }
+  }
+
+  profile.profilePicture = secure_url;
+  profile.profilePicturePublicId = public_id;
+
+  await profile.save();
+
+  const response = ApiResponse.ok(
+    { profilePicture: secure_url },
+    "Profile picture updated.",
+  );
+
+  return res.status(response.statusCode).json(response);
+});
+
+/**
+ * @desc    Remove profile picture
+ * @route   DELETE /api/v1/members/profile/picture
+ */
+export const removeProfilePicture = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  const profile = await Profile.findOne({ user: userId });
+
+  if (!profile) {
+    throw NotFoundError.profile(userId);
+  }
+
+  if (profile.profilePicturePublicId) {
+    try {
+      await cloudinary.uploader.destroy(profile.profilePicturePublicId);
+    } catch (err) {
+      logger.warn("Failed to delete profile picture from Cloudinary", {
+        publicId: profile.profilePicturePublicId,
+        error: err.message,
+      });
+    }
+  }
+
+  profile.profilePicture = null;
+  profile.profilePicturePublicId = null;
+
+  await profile.save();
+
+  const response = ApiResponse.ok(null, "Profile picture removed.");
+
   return res.status(response.statusCode).json(response);
 });
 
