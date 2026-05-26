@@ -260,44 +260,42 @@ NotificationSchema.index(
  * Callers should transition status and let this hook maintain readAt.
  * Direct manipulation of readAt is strongly discouraged.
  */
-NotificationSchema.pre("save", function (next) {
-  if (!this.isModified("status")) return next();
+NotificationSchema.pre("save", async function () {
+  if (!this.isModified("status")) return;
 
-  // $__getValue reads the committed (pre-modification) value from Mongoose's
-  // internal document state. this.status at this point is already the NEW
-  // value, so we cannot use it to determine the previous state.
   const previousStatus =
     this.$__getValue("status") ?? NOTIFICATION_STATUS.UNREAD;
   const nextStatus = this.status;
 
-  // Skip when status hasn't actually changed — isModified can fire
-  // spuriously when a document is re-saved with identical field values.
-  if (previousStatus === nextStatus) return next();
+  // New documents: status is being set for the first time — skip transition guard.
+  if (this.isNew) {
+    if (nextStatus === NOTIFICATION_STATUS.READ && !this.readAt) {
+      this.readAt = new Date();
+    }
+    if (nextStatus === NOTIFICATION_STATUS.UNREAD && this.readAt) {
+      this.readAt = null;
+    }
+    return;
+  }
 
-  // ── Transition guard ───────────────────────────────────────────────────
+  if (previousStatus === nextStatus) return;
+
   const allowed = ALLOWED_TRANSITIONS[previousStatus];
 
   if (!allowed) {
-    // Defensive: previousStatus is not a recognised NOTIFICATION_STATUS value.
-    // Most likely a bad migration or a manually inserted document.
-    return next(
-      new Error(
-        `Notification: unrecognised current status "${previousStatus}". ` +
-          `Cannot validate transition to "${nextStatus}".`,
-      ),
+    throw new Error(
+      `Notification: unrecognised current status "${previousStatus}". ` +
+        `Cannot validate transition to "${nextStatus}".`,
     );
   }
 
   if (!allowed.has(nextStatus)) {
-    return next(
-      new Error(
-        `Notification: illegal status transition "${previousStatus}" → "${nextStatus}". ` +
-          `Allowed from "${previousStatus}": ${[...allowed].join(", ") || "none (terminal state)"}.`,
-      ),
+    throw new Error(
+      `Notification: illegal status transition "${previousStatus}" → "${nextStatus}". ` +
+        `Allowed from "${previousStatus}": ${[...allowed].join(", ") || "none (terminal state)"}.`,
     );
   }
 
-  // ── readAt invariants (transition is valid) ────────────────────────────
   if (nextStatus === NOTIFICATION_STATUS.READ && !this.readAt) {
     this.readAt = new Date();
   }
@@ -305,10 +303,6 @@ NotificationSchema.pre("save", function (next) {
   if (nextStatus === NOTIFICATION_STATUS.UNREAD && this.readAt) {
     this.readAt = null;
   }
-
-  // ARCHIVED: readAt preserved intentionally — no action needed.
-
-  next();
 });
 
 /**
@@ -329,7 +323,7 @@ NotificationSchema.pre("save", function (next) {
  */
 NotificationSchema.pre(
   ["findOneAndUpdate", "updateOne", "updateMany"],
-  function (next) {
+  async function () {
     const update = this.getUpdate();
 
     // Normalise: handle both $set and top-level update shapes
@@ -348,8 +342,6 @@ NotificationSchema.pre(
       const setter = update.$set ?? (update.$set = {});
       setter.readAt = null;
     }
-
-    next();
   },
 );
 
