@@ -13,7 +13,10 @@ import {
   IDEMPOTENCY_KEY_MAX_LENGTH,
 } from "../models/Broadcast.js";
 import { normalizeZodErrors } from "../shared/normalizeZodErrors.js";
-import { buildValidationFailure } from "../shared/buildValidation.js";
+import {
+  buildValidationFailure,
+  buildValidationSuccess,
+} from "../shared/buildValidation.js";
 
 const MESSAGE_TRANSPORT_MAX_LENGTH = 10_000;
 const IDEMPOTENCY_KEY_MIN_LENGTH = 16;
@@ -52,7 +55,7 @@ const broadcastPayloadSchema = z
     notificationType: z
       .enum(Object.values(NOTIFICATION_TYPE))
       .optional()
-      .default(NOTIFICATION_TYPE.SYSTEM),
+      .default(NOTIFICATION_TYPE.BROADCAST),
     metadata: z.record(z.unknown()).optional().default({}),
     createdByAdmin: z.string().regex(objectIdPattern),
   })
