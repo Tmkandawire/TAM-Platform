@@ -1,254 +1,507 @@
 /**
  * @file pages/member/SettingsPage.jsx
- * @description Member settings page — DUMMY TEMPLATE.
+ * @module pages/member
  *
- * This is a structural scaffold for design review and backend planning.
- * All sections are static — no API calls, no mutations.
+ * Member settings page.
  *
- * TODO zones are marked with: // ─── TODO ──────────────
- * Wire each section once the backend controller + DTO are finalised.
+ * Sections:
+ *   1. Account      — contactPerson + phoneNumber, inline edit, approval lock
+ *   2. Security     — password change, collapsible form
+ *   3. Notifications — three preference toggles, optimistic updates
  *
- * Proposed sections (discuss and trim/expand before building for real):
- *  1. Account — email, password change
- *  2. Notifications — per-type email/in-app toggles
- *  3. Security — active sessions, 2FA placeholder
- *  4. Danger Zone — deactivate / delete account
+ * All logic preserved from original. UI rebuilt with Tailwind to match the
+ * app design system — clear buttons, correct hover states, user-friendly layout.
  */
 
-import { useState } from "react";
+import { useState, useReducer, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useReducedMotion } from "framer-motion";
+import { toast } from "sonner";
+import {
+  User,
+  Lock,
+  Bell,
+  Edit3,
+  Save,
+  X,
+  KeyRound,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
+import { MEMBER_QUERY_KEYS } from "../../services/member.service.js";
+import settingsService, {
+  SETTINGS_QUERY_KEYS,
+} from "../../services/settings.service.js";
+import { cn } from "../../utils/cn.js";
+import ProfilePictureUpload from "../../components/member/ProfilePictureUpload.jsx";
 
-// ─── Section registry — controls render order and nav ─────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const SECTIONS = [
-  { id: "account", label: "ACCOUNT", glyph: "◈" },
-  { id: "notifications", label: "NOTIFICATIONS", glyph: "◉" },
-  { id: "security", label: "SECURITY", glyph: "⚑" },
-  { id: "danger", label: "DANGER ZONE", glyph: "✕" },
+  { id: "account", label: "Account", icon: User },
+  { id: "security", label: "Security", icon: Lock },
+  { id: "notifications", label: "Notifications", icon: Bell },
 ];
 
-// ─── Reusable layout primitives ───────────────────────────────────────────────
+const PREF_CONFIG = [
+  {
+    key: "documentUpdates",
+    label: "Document updates",
+    description: "Notifications when a document is approved or rejected.",
+  },
+  {
+    key: "accountAlerts",
+    label: "Account alerts",
+    description:
+      "Status changes, verification milestones, and membership events.",
+  },
+  {
+    key: "broadcasts",
+    label: "TAM broadcasts",
+    description: "Industry notices and announcements from the secretariat.",
+  },
+];
 
-function SectionCard({ id, title, glyph, description, children }) {
+// ─── Reducers ─────────────────────────────────────────────────────────────────
+
+const ACCOUNT_INITIAL = {
+  editing: false,
+  contactPerson: "",
+  phoneNumber: "",
+  errors: {},
+};
+
+function accountReducer(state, action) {
+  switch (action.type) {
+    case "OPEN":
+      return {
+        ...state,
+        editing: true,
+        contactPerson: action.contactPerson ?? "",
+        phoneNumber: action.phoneNumber ?? "",
+        errors: {},
+      };
+    case "CHANGE":
+      return {
+        ...state,
+        [action.field]: action.value,
+        errors: { ...state.errors, [action.field]: undefined },
+      };
+    case "SET_ERRORS":
+      return { ...state, errors: action.errors };
+    case "CLOSE":
+      return ACCOUNT_INITIAL;
+    default:
+      return state;
+  }
+}
+
+const PASSWORD_INITIAL = {
+  open: false,
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
+  errors: {},
+  serverError: null,
+  success: false,
+};
+
+function passwordReducer(state, action) {
+  switch (action.type) {
+    case "TOGGLE":
+      return state.open
+        ? PASSWORD_INITIAL
+        : { ...PASSWORD_INITIAL, open: true };
+    case "CHANGE":
+      return {
+        ...state,
+        [action.field]: action.value,
+        errors: { ...state.errors, [action.field]: undefined },
+        serverError: null,
+        success: false,
+      };
+    case "SET_ERRORS":
+      return { ...state, errors: action.errors };
+    case "SERVER_ERROR":
+      return { ...state, serverError: action.message };
+    case "SUCCESS":
+      return { ...PASSWORD_INITIAL, success: true };
+    default:
+      return state;
+  }
+}
+
+// ─── Validation (mirrors settingsDto.js) ──────────────────────────────────────
+
+function validateAccountFields({ contactPerson, phoneNumber }) {
+  const errors = {};
+  if (contactPerson !== undefined) {
+    const v = contactPerson.trim();
+    if (v.length < 2) errors.contactPerson = "Must be at least 2 characters.";
+    if (v.length > 100) errors.contactPerson = "Cannot exceed 100 characters.";
+  }
+  if (phoneNumber !== undefined) {
+    const v = phoneNumber.trim();
+    if (v && !/^\+?[0-9]{7,15}$/.test(v))
+      errors.phoneNumber = "Must be 7–15 digits, optionally prefixed with +.";
+  }
+  return errors;
+}
+
+function validatePasswordFields({
+  currentPassword,
+  newPassword,
+  confirmPassword,
+}) {
+  const errors = {};
+  if (!currentPassword)
+    errors.currentPassword = "Current password is required.";
+  if (!newPassword || newPassword.length < 8)
+    errors.newPassword = "Must be at least 8 characters.";
+  else if (!/[A-Z]/.test(newPassword))
+    errors.newPassword = "Must contain at least one uppercase letter.";
+  else if (!/[a-z]/.test(newPassword))
+    errors.newPassword = "Must contain at least one lowercase letter.";
+  else if (!/[0-9]/.test(newPassword))
+    errors.newPassword = "Must contain at least one number.";
+  if (newPassword && confirmPassword && newPassword !== confirmPassword)
+    errors.confirmPassword = "Passwords do not match.";
+  if (currentPassword && newPassword && currentPassword === newPassword)
+    errors.newPassword = "New password must differ from current password.";
+  return errors;
+}
+
+// ─── Design primitives ────────────────────────────────────────────────────────
+
+function FieldLabel({ htmlFor, children }) {
   return (
-    <section
-      id={id}
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: "6px",
-        overflow: "hidden",
-        background: "var(--surface)",
-        marginBottom: "20px",
-      }}
+    <label
+      htmlFor={htmlFor}
+      className="block font-body text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5"
     >
-      {/* Card header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          padding: "16px 20px",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface-raised, rgba(255,255,255,0.02))",
-        }}
-      >
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "14px",
-            color: "var(--muted)",
-          }}
-        >
-          {glyph}
-        </span>
-        <div>
-          <p
-            style={{
-              margin: 0,
-              fontFamily: "var(--font-mono)",
-              fontSize: "11px",
-              letterSpacing: "0.12em",
-              color: "var(--foreground)",
-              textTransform: "uppercase",
-            }}
-          >
-            {title}
-          </p>
-          {description && (
-            <p
-              style={{
-                margin: "2px 0 0",
-                fontFamily: "var(--font-body)",
-                fontSize: "12px",
-                color: "var(--muted)",
-              }}
-            >
-              {description}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Card body */}
-      <div style={{ padding: "20px" }}>{children}</div>
-    </section>
+      {children}
+    </label>
   );
 }
 
-/** A single labelled field row — read-only display style. */
-function FieldRow({ label, value, action }) {
+function FieldError({ message }) {
+  if (!message) return null;
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "16px",
-        padding: "12px 0",
-        borderBottom: "1px solid var(--border)",
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <p
-          style={{
-            margin: 0,
-            fontFamily: "var(--font-mono)",
-            fontSize: "10px",
-            letterSpacing: "0.1em",
-            color: "var(--muted)",
-            textTransform: "uppercase",
-            marginBottom: "2px",
-          }}
-        >
-          {label}
-        </p>
-        <p
-          style={{
-            margin: 0,
-            fontFamily: "var(--font-body)",
-            fontSize: "13.5px",
-            color: "var(--foreground)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {value}
-        </p>
-      </div>
-      {action && <div style={{ flexShrink: 0 }}>{action}</div>}
+    <p className="mt-1.5 font-body text-xs text-primary-600 flex items-center gap-1">
+      <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+      {message}
+    </p>
+  );
+}
+
+function TextInput({
+  id,
+  type = "text",
+  value,
+  onChange,
+  placeholder,
+  error,
+  autoFocus,
+}) {
+  return (
+    <div>
+      <input
+        id={id}
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        className={cn(
+          "w-full px-3 py-2.5 rounded-lg border font-body text-sm text-gray-900",
+          "focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent",
+          "transition-colors duration-150",
+          error
+            ? "border-primary-300 bg-primary-50/30"
+            : "border-gray-200 bg-white hover:border-gray-300",
+        )}
+      />
+      <FieldError message={error} />
     </div>
   );
 }
 
-/** Ghost button — used for non-destructive actions. */
-function GhostBtn({ onClick, color = "var(--foreground)", children }) {
-  const [hover, setHover] = useState(false);
+/** Primary action button — always clearly visible with bg fill */
+function PrimaryButton({ onClick, disabled, children, className }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        fontFamily: "var(--font-mono)",
-        fontSize: "10px",
-        letterSpacing: "0.1em",
-        textTransform: "uppercase",
-        color: hover ? "#fff" : color,
-        background: hover ? color : "transparent",
-        border: `1px solid ${color}66`,
-        borderRadius: "3px",
-        padding: "5px 12px",
-        cursor: "pointer",
-        transition: "background 0.15s, color 0.15s",
-        whiteSpace: "nowrap",
-      }}
+      disabled={disabled}
+      className={cn(
+        "inline-flex items-center gap-2 px-5 py-2.5 rounded-lg",
+        "font-body text-sm font-medium transition-all duration-150 shadow-sm",
+        "focus-visible:outline-none focus-visible:ring-2",
+        "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+        disabled
+          ? "bg-gray-200 text-gray-400 cursor-not-allowed shadow-none"
+          : "bg-gray-900 text-white hover:bg-gray-700 active:bg-gray-800",
+        className,
+      )}
     >
       {children}
     </button>
   );
 }
 
-/** Toggle switch — static/uncontrolled for now. */
-function Toggle({ defaultOn = false, disabled = false }) {
-  const [on, setOn] = useState(defaultOn);
+/** Secondary/ghost button — bordered, never disappears on hover */
+function SecondaryButton({ onClick, disabled, children, className }) {
   return (
     <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "inline-flex items-center gap-2 px-4 py-2.5 rounded-lg",
+        "font-body text-sm font-medium transition-all duration-150",
+        "border border-gray-300 bg-white text-gray-700",
+        "hover:bg-gray-50 hover:border-gray-400 hover:text-gray-900",
+        "focus-visible:outline-none focus-visible:ring-2",
+        "focus-visible:ring-gray-400 focus-visible:ring-offset-2",
+        disabled && "opacity-50 cursor-not-allowed",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Clearly visible Edit button — filled background so non-tech users see it */
+function EditButton({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-2 px-4 py-2 rounded-lg",
+        "font-body text-sm font-medium transition-all duration-150",
+        "bg-gray-100 text-gray-700 border border-gray-200",
+        "hover:bg-gray-200 hover:text-gray-900 hover:border-gray-300",
+        "focus-visible:outline-none focus-visible:ring-2",
+        "focus-visible:ring-gray-400 focus-visible:ring-offset-2",
+      )}
+    >
+      <Edit3 className="w-3.5 h-3.5" aria-hidden="true" />
+      Edit
+    </button>
+  );
+}
+
+/** Toggle switch */
+function ToggleSwitch({ on, onChange, disabled, reduced }) {
+  return (
+    <button
+      type="button"
       role="switch"
       aria-checked={on}
       disabled={disabled}
-      onClick={() => !disabled && setOn((v) => !v)}
-      style={{
-        position: "relative",
-        width: "36px",
-        height: "20px",
-        borderRadius: "10px",
-        border: "none",
-        background: on ? "var(--tam-green)" : "var(--border)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        padding: 0,
-        transition: "background 0.2s",
-        flexShrink: 0,
-        opacity: disabled ? 0.5 : 1,
-      }}
+      onClick={() => !disabled && onChange(!on)}
+      className={cn(
+        "relative w-11 h-6 rounded-full border-2 transition-colors duration-200",
+        "focus-visible:outline-none focus-visible:ring-2",
+        "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+        on
+          ? "bg-secondary-500 border-secondary-500"
+          : "bg-gray-200 border-gray-200",
+        disabled && "opacity-50 cursor-not-allowed",
+        !disabled && "cursor-pointer",
+      )}
     >
       <span
-        style={{
-          position: "absolute",
-          top: "3px",
-          left: on ? "19px" : "3px",
-          width: "14px",
-          height: "14px",
-          borderRadius: "50%",
-          background: "#fff",
-          transition: "left 0.2s",
-          display: "block",
-        }}
+        className={cn(
+          "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm",
+          "transition-all",
+          reduced ? "duration-0" : "duration-200",
+          on ? "left-[22px]" : "left-0.5",
+        )}
       />
     </button>
   );
 }
 
-/** Toggle row — label + description + toggle. */
-function ToggleRow({ label, description, defaultOn, disabled }) {
+/** Section card wrapper */
+function SectionCard({
+  id,
+  icon: Icon,
+  title,
+  subtitle,
+  headerAction,
+  children,
+}) {
+  return (
+    <section
+      id={id}
+      className="bg-white rounded-xl border border-gray-100 overflow-hidden"
+    >
+      <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-gray-50 bg-gray-50/50">
+        <div className="flex items-center gap-3">
+          <Icon
+            className="w-4 h-4 text-gray-400 flex-shrink-0"
+            aria-hidden="true"
+          />
+          <div>
+            <h2 className="font-display font-bold text-gray-900 text-sm">
+              {title}
+            </h2>
+            {subtitle && (
+              <p className="font-body text-xs text-gray-400 mt-0.5">
+                {subtitle}
+              </p>
+            )}
+          </div>
+        </div>
+        {headerAction && <div className="flex-shrink-0">{headerAction}</div>}
+      </div>
+      <div className="px-6 py-5">{children}</div>
+    </section>
+  );
+}
+
+/** Read-only field row */
+function DisplayRow({ label, value, last }) {
+  return (
+    <div className={cn("py-3", !last && "border-b border-gray-50")}>
+      <p className="font-body text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "font-body text-sm",
+          value ? "text-gray-900" : "text-gray-400 italic",
+        )}
+      >
+        {value || "Not set"}
+      </p>
+    </div>
+  );
+}
+
+/** Form action row with Save + Cancel */
+function FormActions({
+  onSave,
+  onCancel,
+  isSaving,
+  saveLabel = "Save Changes",
+}) {
+  return (
+    <div className="flex items-center justify-end gap-3 pt-4 mt-4 border-t border-gray-100">
+      <SecondaryButton onClick={onCancel} disabled={isSaving}>
+        <X className="w-3.5 h-3.5" aria-hidden="true" />
+        Cancel
+      </SecondaryButton>
+      <PrimaryButton onClick={onSave} disabled={isSaving}>
+        {isSaving ? (
+          <>
+            <RefreshCw
+              className="w-3.5 h-3.5 animate-spin"
+              aria-hidden="true"
+            />
+            Saving…
+          </>
+        ) : (
+          <>
+            <Save className="w-3.5 h-3.5" aria-hidden="true" />
+            {saveLabel}
+          </>
+        )}
+      </PrimaryButton>
+    </div>
+  );
+}
+
+/** Approval lock notice */
+function ApprovalLockNotice() {
+  return (
+    <div className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-amber-50 border border-amber-200">
+      <ShieldCheck
+        className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5"
+        aria-hidden="true"
+      />
+      <p className="font-body text-sm text-amber-700 leading-relaxed">
+        Your profile has been approved. Contact the TAM secretariat to request
+        changes.
+      </p>
+    </div>
+  );
+}
+
+/** Success / error banner */
+function InlineBanner({ type, children }) {
+  const isSuccess = type === "success";
   return (
     <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "16px",
-        padding: "12px 0",
-        borderBottom: "1px solid var(--border)",
-      }}
+      className={cn(
+        "flex items-center gap-2 px-4 py-3 rounded-lg mb-4 font-body text-sm",
+        isSuccess
+          ? "bg-secondary-50 border border-secondary-200 text-secondary-700"
+          : "bg-primary-50 border border-primary-200 text-primary-700",
+      )}
     >
-      <div>
-        <p
-          style={{
-            margin: 0,
-            fontFamily: "var(--font-body)",
-            fontSize: "13.5px",
-            color: "var(--foreground)",
-            fontWeight: 500,
-          }}
-        >
-          {label}
-        </p>
-        {description && (
-          <p
-            style={{
-              margin: "2px 0 0",
-              fontFamily: "var(--font-body)",
-              fontSize: "12px",
-              color: "var(--muted)",
-            }}
-          >
-            {description}
-          </p>
-        )}
-      </div>
-      <Toggle defaultOn={defaultOn} disabled={disabled} />
+      {isSuccess ? (
+        <CheckCircle2 className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+      ) : (
+        <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+      )}
+      {children}
     </div>
+  );
+}
+
+// ─── Sidebar nav ──────────────────────────────────────────────────────────────
+
+function SettingsNav({ activeSection, onNav }) {
+  return (
+    <nav
+      aria-label="Settings sections"
+      className="bg-white rounded-xl border border-gray-100 overflow-hidden sticky top-6"
+    >
+      {SECTIONS.map((s, i) => {
+        const Icon = s.icon;
+        const isActive = activeSection === s.id;
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onNav(s.id)}
+            style={{
+              borderLeft: isActive
+                ? "2px solid var(--tw-color-primary, #ef4444)"
+                : "2px solid transparent",
+              borderBottom:
+                i < SECTIONS.length - 1 ? "1px solid #f9fafb" : "none",
+              borderTop: "none",
+              borderRight: "none",
+            }}
+            className={cn(
+              "flex items-center gap-3 w-full px-4 py-3.5 text-left",
+              "font-body text-sm font-medium transition-all duration-150",
+              "focus-visible:outline-none focus-visible:ring-2",
+              "focus-visible:ring-primary-500 focus-visible:ring-offset-0",
+              isActive
+                ? "bg-primary-50 text-primary-700"
+                : "text-gray-600 hover:bg-gray-50 hover:text-gray-900",
+            )}
+          >
+            <Icon
+              className={cn(
+                "w-4 h-4 flex-shrink-0",
+                isActive ? "text-primary-500" : "text-gray-400",
+              )}
+              aria-hidden="true"
+            />
+            {s.label}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -256,332 +509,476 @@ function ToggleRow({ label, description, defaultOn, disabled }) {
 
 export default function SettingsPage() {
   const reduced = useReducedMotion();
+  const queryClient = useQueryClient();
+
   const [activeSection, setActiveSection] = useState("account");
+  const [accountLocked, setAccountLocked] = useState(false);
+
+  const [accountState, dispatchAccount] = useReducer(
+    accountReducer,
+    ACCOUNT_INITIAL,
+  );
+  const [passwordState, dispatchPassword] = useReducer(
+    passwordReducer,
+    PASSWORD_INITIAL,
+  );
+
+  // ── Queries ───────────────────────────────────────────────────────────────
+
+  const { data: profileData } = useQuery({
+    queryKey: MEMBER_QUERY_KEYS.profile,
+    queryFn: () =>
+      import("../../services/member.service.js")
+        .then((m) => m.default.getProfile())
+        .then((r) => r?.data?.data ?? r?.data ?? r),
+    staleTime: 60_000,
+  });
+
+  const profile = profileData?.data ?? profileData?.profile ?? profileData;
+
+  const {
+    data: prefsData,
+    isLoading: prefsLoading,
+    isError: prefsError,
+  } = useQuery({
+    queryKey: SETTINGS_QUERY_KEYS.notificationPrefs,
+    queryFn: async () => {
+      const r = await settingsService.getNotificationPrefs();
+      // Axios interceptor may unwrap response.data automatically.
+      // Backend returns: { statusCode, data: { notificationPreferences }, message }
+      // After interceptor: r = { notificationPreferences } OR r = { data: { notificationPreferences } }
+      const payload =
+        r?.data?.notificationPreferences ??
+        r?.notificationPreferences ??
+        r?.data ??
+        r;
+      // React Query forbids returning undefined — fall back to empty defaults
+      return (
+        payload ?? {
+          documentUpdates: true,
+          accountAlerts: true,
+          broadcasts: false,
+        }
+      );
+    },
+    staleTime: 60_000,
+  });
+
+  // prefs is the flat { documentUpdates, accountAlerts, broadcasts } object
+  const prefs =
+    prefsData?.documentUpdates !== undefined
+      ? prefsData
+      : (prefsData?.notificationPreferences ?? {
+          documentUpdates: true,
+          accountAlerts: true,
+          broadcasts: false,
+        });
+
+  // ── Mutations ─────────────────────────────────────────────────────────────
+
+  const accountMutation = useMutation({
+    mutationFn: (payload) => settingsService.updateAccountDetails(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.profile });
+      dispatchAccount({ type: "CLOSE" });
+      toast.success("Account details updated.");
+    },
+    onError: (err) => {
+      if (err?.response?.status === 403) {
+        setAccountLocked(true);
+        dispatchAccount({ type: "CLOSE" });
+      } else {
+        toast.error(err?.message ?? "Failed to update account.");
+      }
+    },
+  });
+
+  const passwordMutation = useMutation({
+    mutationFn: (payload) => settingsService.changePassword(payload),
+    onSuccess: () => {
+      dispatchPassword({ type: "SUCCESS" });
+      toast.success("Password updated successfully.");
+    },
+    onError: (err) => {
+      const msg =
+        err?.response?.data?.message ??
+        "Something went wrong. Please try again.";
+      dispatchPassword({ type: "SERVER_ERROR", message: msg });
+    },
+  });
+
+  const prefsMutation = useMutation({
+    mutationFn: (payload) => settingsService.updateNotificationPrefs(payload),
+    onMutate: async (payload) => {
+      await queryClient.cancelQueries({
+        queryKey: SETTINGS_QUERY_KEYS.notificationPrefs,
+      });
+      const prev = queryClient.getQueryData(
+        SETTINGS_QUERY_KEYS.notificationPrefs,
+      );
+      queryClient.setQueryData(SETTINGS_QUERY_KEYS.notificationPrefs, (old) => {
+        // old is the flat prefs object { documentUpdates, accountAlerts, broadcasts }
+        // Must never return undefined — React Query will throw
+        const base = old ?? {
+          documentUpdates: true,
+          accountAlerts: true,
+          broadcasts: false,
+        };
+        return { ...base, ...payload };
+      });
+      return { prev };
+    },
+    onError: (_err, _payload, ctx) => {
+      if (ctx?.prev)
+        queryClient.setQueryData(
+          SETTINGS_QUERY_KEYS.notificationPrefs,
+          ctx.prev,
+        );
+      toast.error("Failed to update preferences.");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: SETTINGS_QUERY_KEYS.notificationPrefs,
+      });
+    },
+  });
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const handleAccountSave = useCallback(() => {
+    const payload = {};
+    const cp = accountState.contactPerson.trim();
+    const ph = accountState.phoneNumber.trim();
+    if (cp !== (profile?.contactPerson ?? "")) payload.contactPerson = cp;
+    if (ph !== (profile?.phoneNumber ?? "")) payload.phoneNumber = ph;
+    if (Object.keys(payload).length === 0) {
+      dispatchAccount({ type: "CLOSE" });
+      return;
+    }
+    const errors = validateAccountFields(payload);
+    if (Object.keys(errors).length > 0) {
+      dispatchAccount({ type: "SET_ERRORS", errors });
+      return;
+    }
+    accountMutation.mutate(payload);
+  }, [accountState, profile, accountMutation]);
+
+  const handlePasswordSave = useCallback(() => {
+    const { currentPassword, newPassword, confirmPassword } = passwordState;
+    const errors = validatePasswordFields({
+      currentPassword,
+      newPassword,
+      confirmPassword,
+    });
+    if (Object.keys(errors).length > 0) {
+      dispatchPassword({ type: "SET_ERRORS", errors });
+      return;
+    }
+    passwordMutation.mutate({
+      currentPassword,
+      newPassword,
+      confirmNewPassword: confirmPassword,
+    });
+  }, [passwordState, passwordMutation]);
+
+  const handleNavClick = useCallback((id) => {
+    setActiveSection(id);
+    document
+      .getElementById(id)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <>
-      <style>{`
-        @keyframes tam-slide-in {
-          from { opacity: 0; transform: translateY(6px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
+    <div className="space-y-6 max-w-4xl">
+      {/* Page header */}
+      <div>
+        <h1 className="font-display font-bold text-gray-900 text-2xl sm:text-3xl">
+          Settings
+        </h1>
+        <p className="font-body text-gray-400 text-sm mt-1">
+          Manage your account, security, and notification preferences.
+        </p>
+      </div>
 
-      <div
-        style={{
-          minHeight: "100%",
-          background: "var(--page-bg, var(--background))",
-          fontFamily: "var(--font-body)",
-        }}
-      >
-        {/* ── Page header ────────────────────────────────────────────────── */}
-        <header
-          style={{
-            padding: "28px 28px 0",
-            marginBottom: "24px",
-            animation: reduced ? "none" : "tam-slide-in 0.35s ease both",
-          }}
-        >
-          <p
-            style={{
-              margin: "0 0 4px",
-              fontFamily: "var(--font-mono)",
-              fontSize: "10px",
-              letterSpacing: "0.16em",
-              color: "var(--muted)",
-              textTransform: "uppercase",
-            }}
+      {/* Body: sidebar + content */}
+      <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-6 items-start">
+        {/* Sidebar */}
+        <SettingsNav activeSection={activeSection} onNav={handleNavClick} />
+
+        {/* Content */}
+        <div className="space-y-4">
+          {/* ── 1. Account ─────────────────────────────────────────────────── */}
+          <SectionCard
+            id="account"
+            icon={User}
+            title="Account"
+            subtitle="Your display name and contact details."
+            headerAction={
+              !accountState.editing && !accountLocked ? (
+                <EditButton
+                  onClick={() =>
+                    dispatchAccount({
+                      type: "OPEN",
+                      contactPerson: profile?.contactPerson ?? "",
+                      phoneNumber: profile?.phoneNumber ?? "",
+                    })
+                  }
+                />
+              ) : null
+            }
           >
-            MEMBER PORTAL · CONFIGURATION
-          </p>
-          <h1
-            style={{
-              margin: 0,
-              fontFamily: "var(--font-mono)",
-              fontSize: "clamp(20px, 3vw, 26px)",
-              fontWeight: 700,
-              letterSpacing: "0.04em",
-              color: "var(--foreground)",
-            }}
-          >
-            SETTINGS
-          </h1>
-        </header>
-
-        {/* ── Body — sidebar nav + content ───────────────────────────────── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "180px 1fr",
-            gap: "0 24px",
-            padding: "0 28px 40px",
-            alignItems: "start",
-            animation: reduced ? "none" : "tam-slide-in 0.4s ease 0.05s both",
-          }}
-        >
-          {/* Sidebar nav */}
-          <nav
-            aria-label="Settings sections"
-            style={{
-              position: "sticky",
-              top: "24px",
-              border: "1px solid var(--border)",
-              borderRadius: "6px",
-              overflow: "hidden",
-              background: "var(--surface)",
-            }}
-          >
-            {SECTIONS.map((s) => {
-              const isActive = activeSection === s.id;
-              const isDanger = s.id === "danger";
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => {
-                    setActiveSection(s.id);
-                    document
-                      .getElementById(s.id)
-                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    width: "100%",
-                    padding: "11px 14px",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "11px",
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    textAlign: "left",
-                    background: isActive
-                      ? "rgba(220,38,38,0.06)"
-                      : "transparent",
-                    borderLeft: isActive
-                      ? "2px solid var(--tam-red)"
-                      : "2px solid transparent",
-                    borderRight: "none",
-                    borderTop: "none",
-                    borderBottom: "1px solid var(--border)",
-                    color: isDanger
-                      ? "var(--tam-red)"
-                      : isActive
-                        ? "var(--foreground)"
-                        : "var(--muted)",
-                    cursor: "pointer",
-                    transition: "background 0.15s, color 0.15s",
-                  }}
-                >
-                  <span>{s.glyph}</span>
-                  <span>{s.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* Content column */}
-          <div>
-            {/* ── 1. Account ──────────────────────────────────────────────── */}
-            <SectionCard
-              id="account"
-              glyph="◈"
-              title="Account"
-              description="Your login credentials and identity."
-            >
-              {/* TODO: populate from auth user object (req.user or auth context) */}
-              <FieldRow
-                label="Email address"
-                value="member@example.com"
-                action={<GhostBtn color="var(--tam-red)">Change</GhostBtn>}
-              />
-              <FieldRow
-                label="Password"
-                value="••••••••••••"
-                action={<GhostBtn color="var(--tam-red)">Update</GhostBtn>}
-              />
-              <FieldRow label="Member since" value="01 JAN 2024" />
-              {/* TODO: last row — remove borderBottom */}
-              <FieldRow label="Account status" value="Active" />
-            </SectionCard>
-
-            {/* ── 2. Notifications ────────────────────────────────────────── */}
-            <SectionCard
-              id="notifications"
-              glyph="◉"
-              title="Notifications"
-              description="Control how and when TAM contacts you."
-            >
-              {/* TODO: wire to notificationPreferences field on the member/user model */}
-              {/* TODO: decide whether these are email, in-app, or both — needs backend decision */}
-              <p
-                style={{
-                  margin: "0 0 16px",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "10px",
-                  letterSpacing: "0.1em",
-                  color: "var(--muted)",
-                  textTransform: "uppercase",
-                }}
-              >
-                In-app
-              </p>
-              <ToggleRow
-                label="Document updates"
-                description="When a document is approved or rejected."
-                defaultOn={true}
-              />
-              <ToggleRow
-                label="Account alerts"
-                description="Status changes, verification milestones."
-                defaultOn={true}
-              />
-              <ToggleRow
-                label="TAM broadcasts"
-                description="Industry notices and announcements."
-                defaultOn={false}
-              />
-
-              <p
-                style={{
-                  margin: "20px 0 16px",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "10px",
-                  letterSpacing: "0.1em",
-                  color: "var(--muted)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Email{" "}
-                {/* TODO: implement email notification delivery on the backend first */}
-              </p>
-              <ToggleRow
-                label="Email notifications"
-                description="Receive a summary email for important events."
-                defaultOn={false}
-                disabled={true}
-              />
-              <p
-                style={{
-                  margin: "8px 0 0",
-                  fontFamily: "var(--font-body)",
-                  fontSize: "11.5px",
-                  color: "var(--muted)",
-                  fontStyle: "italic",
-                }}
-              >
-                Email delivery coming soon.
-              </p>
-            </SectionCard>
-
-            {/* ── 3. Security ─────────────────────────────────────────────── */}
-            <SectionCard
-              id="security"
-              glyph="⚑"
-              title="Security"
-              description="Sessions and authentication settings."
-            >
-              {/* TODO: implement active session listing on the backend */}
-              <FieldRow
-                label="Current session"
-                value="Chrome · Blantyre, MW"
-                action={<GhostBtn color="var(--muted)">Sign out</GhostBtn>}
-              />
-              <FieldRow
-                label="Two-factor authentication"
-                value="Not enabled"
-                action={
-                  // TODO: implement 2FA — placeholder only
-                  <GhostBtn color="var(--tam-green)">Enable</GhostBtn>
-                }
-              />
-              <FieldRow label="Last login" value="11 MAY 2026 · 09:14" />
-            </SectionCard>
-
-            {/* ── 4. Danger Zone ──────────────────────────────────────────── */}
-            <SectionCard
-              id="danger"
-              glyph="✕"
-              title="Danger Zone"
-              description="Irreversible account actions."
-            >
-              {/* TODO: implement deactivation + deletion endpoints on the backend */}
-              {/* TODO: deactivation should require admin confirmation flow */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "16px",
-                  padding: "14px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <div>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontFamily: "var(--font-body)",
-                      fontSize: "13.5px",
-                      color: "var(--foreground)",
-                      fontWeight: 500,
-                    }}
-                  >
-                    Deactivate account
-                  </p>
-                  <p
-                    style={{
-                      margin: "2px 0 0",
-                      fontFamily: "var(--font-body)",
-                      fontSize: "12px",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    Temporarily suspend your TAM membership. Reactivation
-                    requires secretariat review.
-                  </p>
+            {accountLocked ? (
+              <ApprovalLockNotice />
+            ) : accountState.editing ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <FieldLabel htmlFor="contactPerson">
+                      Contact Person
+                    </FieldLabel>
+                    <TextInput
+                      id="contactPerson"
+                      value={accountState.contactPerson}
+                      onChange={(v) =>
+                        dispatchAccount({
+                          type: "CHANGE",
+                          field: "contactPerson",
+                          value: v,
+                        })
+                      }
+                      placeholder="Full name"
+                      error={accountState.errors.contactPerson}
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="phoneNumber">Phone Number</FieldLabel>
+                    <TextInput
+                      id="phoneNumber"
+                      value={accountState.phoneNumber}
+                      onChange={(v) =>
+                        dispatchAccount({
+                          type: "CHANGE",
+                          field: "phoneNumber",
+                          value: v,
+                        })
+                      }
+                      placeholder="+265 991 234 567"
+                      error={accountState.errors.phoneNumber}
+                    />
+                  </div>
                 </div>
-                <GhostBtn color="var(--amber, #d97706)">Deactivate</GhostBtn>
+                <FormActions
+                  onSave={handleAccountSave}
+                  onCancel={() => dispatchAccount({ type: "CLOSE" })}
+                  isSaving={accountMutation.isPending}
+                />
               </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "16px",
-                  padding: "14px 0",
-                }}
-              >
-                <div>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontFamily: "var(--font-body)",
-                      fontSize: "13.5px",
-                      color: "var(--tam-red)",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Delete account
-                  </p>
-                  <p
-                    style={{
-                      margin: "2px 0 0",
-                      fontFamily: "var(--font-body)",
-                      fontSize: "12px",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    Permanently remove your profile, documents, and membership
-                    record. Cannot be undone.
-                  </p>
+            ) : (
+              <div>
+                <div className="mb-5 pb-5 border-b border-gray-50">
+                  <ProfilePictureUpload
+                    currentUrl={profile?.profilePicture ?? null}
+                  />
                 </div>
-                <GhostBtn color="var(--tam-red)">Delete</GhostBtn>
+
+                <DisplayRow
+                  label="Contact Person"
+                  value={profile?.contactPerson}
+                />
+
+                <DisplayRow
+                  label="Phone Number"
+                  value={profile?.phoneNumber}
+                  last
+                />
               </div>
-            </SectionCard>
-          </div>
+            )}
+          </SectionCard>
+
+          {/* ── 2. Security ────────────────────────────────────────────────── */}
+          <SectionCard
+            id="security"
+            icon={Lock}
+            title="Security"
+            subtitle="Manage your login credentials."
+            headerAction={
+              <button
+                type="button"
+                onClick={() => dispatchPassword({ type: "TOGGLE" })}
+                className={cn(
+                  "inline-flex items-center gap-2 px-4 py-2 rounded-lg",
+                  "font-body text-sm font-medium transition-all duration-150",
+                  "focus-visible:outline-none focus-visible:ring-2",
+                  "focus-visible:ring-gray-400 focus-visible:ring-offset-2",
+                  passwordState.open
+                    ? "bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                    : "bg-gray-900 text-white hover:bg-gray-700 shadow-sm",
+                )}
+              >
+                {passwordState.open ? (
+                  <>
+                    <X className="w-3.5 h-3.5" aria-hidden="true" />
+                    Cancel
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="w-3.5 h-3.5" aria-hidden="true" />
+                    Change Password
+                  </>
+                )}
+              </button>
+            }
+          >
+            {passwordState.success && (
+              <InlineBanner type="success">
+                Password updated successfully.
+              </InlineBanner>
+            )}
+
+            {!passwordState.open ? (
+              <DisplayRow label="Password" value="••••••••••••" last />
+            ) : (
+              <div className="space-y-4">
+                {passwordState.serverError && (
+                  <InlineBanner type="error">
+                    {passwordState.serverError}
+                  </InlineBanner>
+                )}
+                <div>
+                  <FieldLabel htmlFor="currentPassword">
+                    Current Password
+                  </FieldLabel>
+                  <TextInput
+                    id="currentPassword"
+                    type="password"
+                    value={passwordState.currentPassword}
+                    onChange={(v) =>
+                      dispatchPassword({
+                        type: "CHANGE",
+                        field: "currentPassword",
+                        value: v,
+                      })
+                    }
+                    placeholder="Enter your current password"
+                    error={passwordState.errors.currentPassword}
+                    autoFocus
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <FieldLabel htmlFor="newPassword">New Password</FieldLabel>
+                    <TextInput
+                      id="newPassword"
+                      type="password"
+                      value={passwordState.newPassword}
+                      onChange={(v) =>
+                        dispatchPassword({
+                          type: "CHANGE",
+                          field: "newPassword",
+                          value: v,
+                        })
+                      }
+                      placeholder="Min 8 characters"
+                      error={passwordState.errors.newPassword}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="confirmPassword">
+                      Confirm New Password
+                    </FieldLabel>
+                    <TextInput
+                      id="confirmPassword"
+                      type="password"
+                      value={passwordState.confirmPassword}
+                      onChange={(v) =>
+                        dispatchPassword({
+                          type: "CHANGE",
+                          field: "confirmPassword",
+                          value: v,
+                        })
+                      }
+                      placeholder="Repeat new password"
+                      error={passwordState.errors.confirmPassword}
+                    />
+                  </div>
+                </div>
+                <p className="font-body text-xs text-gray-400">
+                  Must be at least 8 characters with uppercase, lowercase, and a
+                  number.
+                </p>
+                <FormActions
+                  onSave={handlePasswordSave}
+                  onCancel={() => dispatchPassword({ type: "TOGGLE" })}
+                  isSaving={passwordMutation.isPending}
+                  saveLabel="Update Password"
+                />
+              </div>
+            )}
+          </SectionCard>
+
+          {/* ── 3. Notifications ───────────────────────────────────────────── */}
+          <SectionCard
+            id="notifications"
+            icon={Bell}
+            title="Notifications"
+            subtitle="Control which in-app alerts you receive."
+          >
+            {prefsLoading ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between py-3"
+                  >
+                    <div className="space-y-1.5">
+                      <div className="h-3.5 w-36 animate-pulse rounded bg-gray-100" />
+                      <div className="h-3 w-56 animate-pulse rounded bg-gray-100" />
+                    </div>
+                    <div className="h-6 w-11 animate-pulse rounded-full bg-gray-100" />
+                  </div>
+                ))}
+              </div>
+            ) : prefsError ? (
+              <div className="flex items-center gap-2 py-2 font-body text-sm text-primary-600">
+                <AlertCircle
+                  className="w-4 h-4 flex-shrink-0"
+                  aria-hidden="true"
+                />
+                Failed to load preferences. Refresh to try again.
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {PREF_CONFIG.map((pref) => (
+                  <div
+                    key={pref.key}
+                    className="flex items-center justify-between gap-6 py-4 first:pt-0 last:pb-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-body text-sm font-medium text-gray-900">
+                        {pref.label}
+                      </p>
+                      <p className="font-body text-xs text-gray-400 mt-0.5 leading-relaxed">
+                        {pref.description}
+                      </p>
+                    </div>
+                    <ToggleSwitch
+                      on={prefs?.[pref.key] ?? false}
+                      onChange={(val) =>
+                        prefsMutation.mutate({ [pref.key]: val })
+                      }
+                      disabled={prefsMutation.isPending}
+                      reduced={reduced}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionCard>
         </div>
       </div>
-    </>
+    </div>
   );
 }
