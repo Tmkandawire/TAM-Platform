@@ -276,7 +276,7 @@ function ProfileCompletionCard({ profile }) {
                   className="w-4 h-4 text-secondary-500 flex-shrink-0"
                   aria-hidden="true"
                 />
-                <span className="font-body text-sm text-gray-500 line-through">
+                <span className="font-body text-sm text-gray-500">
                   {item.label}
                 </span>
               </div>
@@ -637,8 +637,8 @@ export default function DashboardPage() {
 
   // ── Error ──────────────────────────────────────────────────────────────────
   if (isError) {
-    // 404 means the member hasn't created a profile yet — not a true error
-    if (error?.status === 404) return <NoProfileState />;
+    const status = error?.status ?? error?.response?.status;
+    if (status === 404) return <NoProfileState />;
     return <ErrorState onRetry={refetch} />;
   }
 
@@ -669,12 +669,29 @@ export default function DashboardPage() {
     },
     {
       icon: CheckCircle2,
-      label: "Profile Status",
-      value: profile.isComplete ? "Complete" : "Incomplete",
-      sub: profile.isApproved ? "approved by TAM" : "pending review",
-      accent: profile.isComplete
-        ? "bg-secondary-50 text-secondary-500"
-        : "bg-amber-50 text-amber-500",
+      label: "Membership Status",
+      value:
+        accountStatus === "active"
+          ? "Active"
+          : accountStatus === "rejected"
+            ? "Rejected"
+            : accountStatus === "suspended"
+              ? "Suspended"
+              : "Pending",
+      sub:
+        accountStatus === "active"
+          ? "approved by TAM"
+          : accountStatus === "rejected"
+            ? "not approved"
+            : accountStatus === "suspended"
+              ? "access restricted"
+              : "awaiting review",
+      accent:
+        accountStatus === "active"
+          ? "bg-secondary-50 text-secondary-500"
+          : accountStatus === "pending"
+            ? "bg-amber-50 text-amber-500"
+            : "bg-primary-50 text-primary-500",
     },
     {
       icon: Calendar,
