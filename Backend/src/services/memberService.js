@@ -133,9 +133,20 @@ class MemberService {
       throw new ApiError(400, "Invalid user ID", [], "INVALID_ID");
     }
 
-    const profile = await Profile.findOne({ user: userId })
-      .populate("user", "email role status")
-      .lean();
+    let profile;
+    try {
+      profile = await Profile.findOne({ user: userId })
+        .populate("user", "email role status")
+        .select("-profilePicturePublicId -isDeleted -documents.publicId")
+        .lean();
+    } catch (err) {
+      logger.error("getProfileByUserId query failed", {
+        userId,
+        error: err.message,
+        stack: err.stack,
+      });
+      throw new ApiError(500, "Failed to fetch profile", [], "DB_ERROR");
+    }
 
     if (!profile) {
       throw new ApiError(
@@ -163,10 +174,12 @@ class MemberService {
       throw new ApiError(404, "Profile not found", [], "PROFILE_NOT_FOUND");
     }
 
-    if (profile.isApproved) {
+    const user = await User.findById(userId).select("status").lean();
+
+    if (profile.isApproved || user?.status === "pending") {
       throw new ApiError(
         403,
-        "Approved profiles cannot be modified",
+        "Profile cannot be modified while under review or after approval",
         [],
         "PROFILE_LOCKED",
       );
@@ -235,6 +248,28 @@ class MemberService {
       );
     }
 
+    const REQUIRED_DOC_TYPES = [
+      "nationalId",
+      "utilityBill",
+      "businessCert",
+      "tinCertificate",
+    ];
+
+    const uploadedTypes = profile.documents.map((doc) => doc.documentType);
+
+    const missingDocs = REQUIRED_DOC_TYPES.filter(
+      (type) => !uploadedTypes.includes(type),
+    );
+
+    if (missingDocs.length > 0) {
+      throw new ApiError(
+        400,
+        `Missing required documents: ${missingDocs.join(", ")}`,
+        [],
+        "DOCUMENTS_REQUIRED",
+      );
+    }
+
     await User.findByIdAndUpdate(userId, { status: "pending" });
     logger.info(`🚀 Profile ${profile._id} submitted for TAM review`);
 
@@ -246,7 +281,11 @@ class MemberService {
   ------------------------- */
   async getPublicDirectory(filters = {}) {
     const query = { isApproved: true };
-    if (filters.city) query.city = filters.city;
+    const VALID_CITIES = ["Blantyre", "Lilongwe", "Mzuzu", "Zomba", "Other"];
+
+    if (filters.city && VALID_CITIES.includes(filters.city)) {
+      query.city = filters.city;
+    }
 
     let sortOption = { businessName: 1 };
 
