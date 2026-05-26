@@ -132,8 +132,8 @@ function collectDtoErrors(dto, context = "dto") {
 
   const prefix = (field) => `${context}.${field}`;
 
-  // userId
-  const userIdError = checkObjectId(dto.userId, prefix("userId"));
+  // user
+  const userIdError = checkObjectId(dto.user, prefix("user"));
   if (userIdError) errors.push(userIdError);
 
   // type (STRICT — no normalization)
