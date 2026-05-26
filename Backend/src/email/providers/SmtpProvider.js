@@ -231,4 +231,17 @@ class SmtpProvider extends EmailProvider {
  * For startup verification, prefer:
  *   const provider = await SmtpProvider.create();
  */
-export default new SmtpProvider();
+let _instance = null;
+
+export default {
+  get instance() {
+    if (!_instance) _instance = new SmtpProvider();
+    return _instance;
+  },
+  send(payload) {
+    return this.instance.send(payload);
+  },
+  verify() {
+    return this.instance.verify();
+  },
+};
