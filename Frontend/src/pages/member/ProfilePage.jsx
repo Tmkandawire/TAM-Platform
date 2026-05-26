@@ -27,8 +27,11 @@
  *
  * Data:
  *  - GET /api/v1/members/me via MEMBER_QUERY_KEYS.profile (shared cache)
- *  - PATCH /api/v1/members/profile
+ *  - PATCH /api/v1/members/profile ← update (existing profile)
  *  - POST /api/v1/members/submit
+ *
+ * Note: Profile creation is handled during onboarding (/onboarding).
+ *  By the time a member reaches this page, a profile is guaranteed to exist.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -64,6 +67,7 @@ import {
   DOCUMENT_TYPE_LABELS,
 } from "../../utils/formatters.js";
 import { cn } from "../../utils/cn.js";
+import ProfilePictureUpload from "../../components/member/ProfilePictureUpload.jsx";
 
 // ─── Constants (mirror backend memberDto.js) ──────────────────────────────────
 
@@ -71,11 +75,12 @@ const CITIES = ["Blantyre", "Lilongwe", "Mzuzu", "Zomba", "Other"];
 const VEHICLE_TYPES = ["Truck", "Tanker", "Van", "Minibus", "Other"];
 const MEMBERSHIP_TYPES = ["Small Scale", "Medium Scale", "Corporate"];
 
-// ─── Frontend validation schema (mirrors updateProfileSchema) ─────────────────
+// ─── Validation schemas ───────────────────────────────────────────────────────
 
 const MW_PHONE_REGEX = /^(?:\+265|0)[89]\d{8}$/;
 const normalizePhone = (val) => val.replace(/[\s\-().]/g, "");
 
+/** Mirrors backend updateProfileSchema — all fields optional for PATCH */
 const profileUpdateSchema = z.object({
   businessName: z
     .string()
@@ -206,7 +211,6 @@ function ReadValue({ value, placeholder = "Not provided" }) {
 function FormSection({ index, title, icon: Icon, children }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-      {/* Section header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-50 bg-gray-50/50">
         <span className="font-display font-bold text-gray-300 text-xs tracking-[0.2em]">
           {String(index).padStart(2, "0")}
@@ -275,7 +279,6 @@ function StatusSidebar({ profile, onSubmit, isSubmitting }) {
   const isComplete = profile?.isComplete ?? false;
   const isApproved = profile?.isApproved ?? false;
   const hasDocuments = (profile?.documents?.length ?? 0) > 0;
-  const accountStatus = profile?.user?.status ?? "pending";
 
   const canSubmit = isComplete && !isApproved && hasDocuments;
 
@@ -318,7 +321,6 @@ function StatusSidebar({ profile, onSubmit, isSubmitting }) {
           </span>
         </div>
 
-        {/* Progress bar */}
         <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden mb-4">
           <div
             className={cn(
@@ -329,7 +331,6 @@ function StatusSidebar({ profile, onSubmit, isSubmitting }) {
           />
         </div>
 
-        {/* Checklist */}
         <ul className="space-y-2">
           {completionItems.map((item) => (
             <li key={item.label} className="flex items-center gap-2">
@@ -344,7 +345,7 @@ function StatusSidebar({ profile, onSubmit, isSubmitting }) {
               <span
                 className={cn(
                   "font-body text-xs",
-                  item.done ? "text-gray-400 line-through" : "text-gray-600",
+                  item.done ? "text-gray-400" : "text-gray-600",
                 )}
               >
                 {item.label}
@@ -472,7 +473,7 @@ function StatusSidebar({ profile, onSubmit, isSubmitting }) {
   );
 }
 
-// ─── Profile form ─────────────────────────────────────────────────────────────
+// ─── Profile form (update existing) ──────────────────────────────────────────
 
 function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
   const queryClient = useQueryClient();
@@ -496,13 +497,10 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
     },
   });
 
-  // Notify parent when dirty state changes so the navigation blocker
-  // can decide whether to intercept route transitions
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
 
-  // Reset form to latest profile data when profile changes
   useEffect(() => {
     if (profile) {
       reset({
@@ -530,7 +528,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
   });
 
   const onSubmit = (data) => {
-    // Strip empty strings so the backend only receives changed fields
     const payload = Object.fromEntries(
       Object.entries(data).filter(
         ([, v]) =>
@@ -548,7 +545,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
       {/* ── 01 Business Information ────────────────────────────────────────── */}
       <FormSection index={1} title="Business Information" icon={Building2}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-          {/* Business name */}
           <div className="sm:col-span-2">
             <FieldLabel htmlFor="businessName" required>
               Business Name
@@ -576,7 +572,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
             )}
           </div>
 
-          {/* Registration number — read-only always (set at creation) */}
           <div>
             <FieldLabel htmlFor="registrationNumber">
               Registration Number
@@ -584,13 +579,11 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
             <ReadValue value={profile?.registrationNumber} />
           </div>
 
-          {/* Tax ID — read-only always */}
           <div>
-            <FieldLabel htmlFor="taxId">Tax ID</FieldLabel>
+            <FieldLabel htmlFor="taxId">TAX ID</FieldLabel>
             <ReadValue value={profile?.taxId} placeholder="Not provided" />
           </div>
 
-          {/* Membership type — read-only (set at creation) */}
           <div>
             <FieldLabel htmlFor="membershipType">Membership Type</FieldLabel>
             <ReadValue value={profile?.membershipType} />
@@ -601,7 +594,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
       {/* ── 02 Contact Details ─────────────────────────────────────────────── */}
       <FormSection index={2} title="Contact Details" icon={Phone}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-          {/* Contact person */}
           <div>
             <FieldLabel htmlFor="contactPerson" required>
               Contact Person
@@ -629,7 +621,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
             )}
           </div>
 
-          {/* Phone number */}
           <div>
             <FieldLabel htmlFor="phoneNumber" required>
               Phone Number
@@ -658,7 +649,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
             )}
           </div>
 
-          {/* Physical address */}
           <div className="sm:col-span-2">
             <FieldLabel htmlFor="physicalAddress" required>
               Physical Address
@@ -686,7 +676,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
             )}
           </div>
 
-          {/* City */}
           <div>
             <FieldLabel htmlFor="city" required>
               City
@@ -724,7 +713,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
       {/* ── 03 Fleet Information ───────────────────────────────────────────── */}
       <FormSection index={3} title="Fleet Information" icon={Truck}>
         <div className="space-y-5">
-          {/* Fleet size */}
           <div className="max-w-xs">
             <FieldLabel htmlFor="fleetSize" required>
               Fleet Size
@@ -758,7 +746,6 @@ function ProfileForm({ profile, isEditing, onCancel, onSaved, onDirtyChange }) {
             )}
           </div>
 
-          {/* Vehicle types */}
           <div>
             <FieldLabel required>Vehicle Types</FieldLabel>
             {isEditing && !isLocked ? (
@@ -882,9 +869,6 @@ export default function ProfilePage() {
 
   const variants = prefersReducedMotion ? reducedFadeUp : fadeUp;
 
-  // Block navigation when the form has unsaved changes.
-  // useBlocker fires before the route transition — the confirm dialog
-  // gives the member a chance to save or discard before leaving.
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       isEditing &&
@@ -892,8 +876,6 @@ export default function ProfilePage() {
       currentLocation.pathname !== nextLocation.pathname,
   );
 
-  // When the blocker fires, show a native confirm dialog.
-  // If the member confirms, proceed; otherwise reset the blocker.
   useEffect(() => {
     if (blocker.state === "blocked") {
       const confirmed = window.confirm(
@@ -920,7 +902,7 @@ export default function ProfilePage() {
     queryKey: MEMBER_QUERY_KEYS.profile,
     queryFn: memberService.getProfile,
     staleTime: 5 * 60 * 1000,
-    retry: 1,
+    retry: false,
   });
 
   const profile = profileData?.data ?? profileData ?? null;
@@ -974,15 +956,36 @@ export default function ProfilePage() {
         custom={0}
         className="flex items-start justify-between gap-4"
       >
-        <div>
-          <h1 className="font-display font-bold text-gray-900 text-2xl sm:text-3xl">
-            {profile?.businessName ?? "My Profile"}
-          </h1>
-          <p className="font-body text-gray-400 text-sm mt-1">
-            {profile?.updatedAt
-              ? `Last updated ${formatDateTime(profile.updatedAt)}`
-              : "Profile not yet saved"}
-          </p>
+        <div className="flex items-center gap-4">
+          {/* Profile picture — always visible, never locked */}
+          <div className="flex-shrink-0">
+            <div className="relative">
+              <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100 flex items-center justify-center">
+                {profile?.profilePicture ? (
+                  <img
+                    src={profile.profilePicture}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="font-display font-bold text-gray-400 text-xl">
+                    {profile?.contactPerson?.[0]?.toUpperCase() ?? "?"}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h1 className="font-display font-bold text-gray-900 text-2xl sm:text-3xl">
+              {profile?.businessName ?? "My Profile"}
+            </h1>
+            <p className="font-body text-gray-400 text-sm mt-1">
+              {profile?.updatedAt
+                ? `Last updated ${formatDateTime(profile.updatedAt)}`
+                : "Profile not yet saved"}
+            </p>
+          </div>
         </div>
 
         {/* Edit / lock toggle */}
