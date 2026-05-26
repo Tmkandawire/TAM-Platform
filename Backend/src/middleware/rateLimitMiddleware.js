@@ -73,7 +73,7 @@ const IS_TEST = process.env.NODE_ENV === "test";
 
 const LIMITS = Object.freeze({
   global: {
-    max: Number(process.env.RL_GLOBAL_MAX ?? 100),
+    max: Number(process.env.RL_GLOBAL_MAX ?? 300),
     windowMs: Number(process.env.RL_GLOBAL_WINDOW_MS ?? 15 * 60 * 1000),
   },
   auth: {
@@ -89,7 +89,7 @@ const LIMITS = Object.freeze({
     windowMs: Number(process.env.RL_UPLOAD_WINDOW_MS ?? 15 * 60 * 1000),
   },
   admin: {
-    max: Number(process.env.RL_ADMIN_MAX ?? 30),
+    max: Number(process.env.RL_ADMIN_MAX ?? 500),
     windowMs: Number(process.env.RL_ADMIN_WINDOW_MS ?? 15 * 60 * 1000),
   },
   bulk: {
@@ -342,4 +342,20 @@ export const broadcastLimiter = makeFailClosedLimiter({
   max: LIMITS.broadcast.max,
   limiterID: "broadcast",
   message: "Broadcast limit reached. You can send 2 broadcasts per minute.",
+});
+
+export const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  message: "Too many password reset attempts. Please try again later.",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+export const resetPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many password reset attempts. Please try again later.",
+  standardHeaders: true,
+  legacyHeaders: false,
 });
