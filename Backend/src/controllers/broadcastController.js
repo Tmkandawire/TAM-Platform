@@ -193,11 +193,8 @@ export const sendBroadcast = asyncHandler(async (req, res) => {
 
   const validation = validateBroadcastPayload(rawPayload);
 
-  if (!validation.success) {
-    // validation.error is the normalized Zod errors array produced by
-    // normalizeZodErrors() + buildValidationFailure(). Pass directly to
-    // ValidationError.zod() — the factory expects this exact shape.
-    throw ValidationError.zod(validation.error);
+  if (!validation.valid) {
+    throw new ValidationError({ errors: validation.error.details });
   }
 
   const reqInfo = buildReqInfo(req);
