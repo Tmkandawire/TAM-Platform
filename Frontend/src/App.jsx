@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import useAuthStore from "./store/authStore.js";
 import { useCurrentUser } from "./hooks/useCurrentUser.js";
 import AppRouter from "./router/index.jsx";
+import ThemeProvider from "./context/ThemeProvider.jsx";
 
 /**
  * Root app component.
@@ -13,7 +14,7 @@ import AppRouter from "./router/index.jsx";
  *  - Render the router
  */
 export default function App() {
-  const { hydrate, logout } = useAuthStore();
+  const { hydrate, logout, user } = useAuthStore();
 
   useEffect(() => {
     // Mark the store as hydrated so ProtectedRoute stops showing PageLoader.
@@ -36,5 +37,9 @@ export default function App() {
    */
   useCurrentUser();
 
-  return <AppRouter />;
+  return (
+    <ThemeProvider userId={user?.id}>
+      <AppRouter />
+    </ThemeProvider>
+  );
 }
