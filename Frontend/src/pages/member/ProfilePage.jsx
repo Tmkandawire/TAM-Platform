@@ -897,6 +897,7 @@ export default function ProfilePage() {
     data: profileData,
     isLoading,
     isError,
+    error,
     refetch,
   } = useQuery({
     queryKey: MEMBER_QUERY_KEYS.profile,
@@ -936,7 +937,45 @@ export default function ProfilePage() {
   if (isLoading) return <ProfileSkeleton />;
 
   // ── Error ──────────────────────────────────────────────────────────────────
-  if (isError) return <ErrorState onRetry={refetch} />;
+  if (isError) {
+    const status = error?.response?.status ?? error?.status;
+
+    if (status === 404) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-gray-50 border border-gray-100 flex items-center justify-center">
+            <AlertCircle className="w-7 h-7 text-gray-300" aria-hidden="true" />
+          </div>
+
+          <div className="text-center max-w-xs">
+            <p className="font-display font-bold text-gray-900 text-lg">
+              No profile yet
+            </p>
+
+            <p className="font-body text-gray-500 text-sm mt-1">
+              Create your member profile to begin the TAM membership process.
+            </p>
+          </div>
+
+          <Link
+            to="/member/onboarding"
+            className={cn(
+              "inline-flex items-center gap-2 px-5 py-2.5 rounded-xl",
+              "bg-primary-500 text-white font-body text-sm font-medium",
+              "hover:bg-primary-600 transition-colors shadow-sm",
+              "focus-visible:outline-none focus-visible:ring-2",
+              "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+            )}
+          >
+            <ChevronRight className="w-4 h-4" aria-hidden="true" />
+            Create Profile
+          </Link>
+        </div>
+      );
+    }
+
+    return <ErrorState onRetry={refetch} />;
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
