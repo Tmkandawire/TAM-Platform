@@ -29,12 +29,16 @@ import {
   AlertCircle,
   RefreshCw,
   ShieldCheck,
+  Monitor,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { MEMBER_QUERY_KEYS } from "../../services/member.service.js";
 import settingsService, {
   SETTINGS_QUERY_KEYS,
 } from "../../services/settings.service.js";
 import { cn } from "../../utils/cn.js";
+import { useTheme } from "../../hooks/useTheme.js";
 import ProfilePictureUpload from "../../components/member/ProfilePictureUpload.jsx";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -43,6 +47,7 @@ const SECTIONS = [
   { id: "account", label: "Account", icon: User },
   { id: "security", label: "Security", icon: Lock },
   { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "appearance", label: "Appearance", icon: Monitor },
 ];
 
 const PREF_CONFIG = [
@@ -452,6 +457,94 @@ function InlineBanner({ type, children }) {
       )}
       {children}
     </div>
+  );
+}
+
+// ─── Appearance section ──────────────────────────────────────────────────────
+
+function AppearanceSection() {
+  const { theme, toggleTheme } = useTheme();
+
+  const options = [
+    {
+      value: "light",
+      label: "Light",
+      icon: Sun,
+      description: "Default light interface.",
+    },
+    {
+      value: "dark",
+      label: "Dark",
+      icon: Moon,
+      description: "Easier on the eyes in low light.",
+    },
+  ];
+
+  return (
+    <SectionCard
+      id="appearance"
+      icon={Monitor}
+      title="Appearance"
+      subtitle="Choose your preferred colour scheme."
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {options.map(({ value, label, icon: Icon, description }) => {
+          const isSelected = theme === value;
+          return (
+            <button
+              key={value}
+              type="button"
+              // Only toggle if this option is NOT already selected
+              onClick={() => {
+                if (!isSelected) toggleTheme();
+              }}
+              aria-pressed={isSelected}
+              className={cn(
+                "flex items-start gap-4 p-4 rounded-xl border-2 text-left",
+                "transition-all duration-150",
+                "focus-visible:outline-none focus-visible:ring-2",
+                "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
+                isSelected
+                  ? "border-primary-500 bg-primary-50 dark:bg-primary-950/30"
+                  : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600",
+              )}
+            >
+              <div
+                className={cn(
+                  "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0",
+                  isSelected
+                    ? "bg-primary-500 text-white"
+                    : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400",
+                )}
+              >
+                <Icon className="w-4 h-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p
+                  className={cn(
+                    "font-body text-sm font-semibold",
+                    isSelected
+                      ? "text-primary-700 dark:text-primary-400"
+                      : "text-gray-900 dark:text-gray-100",
+                  )}
+                >
+                  {label}
+                </p>
+                <p className="font-body text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                  {description}
+                </p>
+              </div>
+              {isSelected && (
+                <CheckCircle2
+                  className="w-4 h-4 text-primary-500 flex-shrink-0 ml-auto mt-0.5"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </SectionCard>
   );
 }
 
@@ -977,6 +1070,9 @@ export default function SettingsPage() {
               </div>
             )}
           </SectionCard>
+
+          {/* ── 4. Appearance ─────────────────────────────────────────────── */}
+          <AppearanceSection />
         </div>
       </div>
     </div>
