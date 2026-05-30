@@ -41,18 +41,18 @@ const QUICK_LINKS = [
 
 const PARTNER_LINKS = [
   { label: "Road Traffic & Safety Services", url: "https://www.rtss.mw" },
-  { label: "MACRA", url: "https://www.macra.mw" },
+  { label: "MACRA", url: "https://macra.mw/" },
   {
     label: "MERA — Malawi Energy Regulatory Authority",
-    url: "https://www.mera.mw",
+    url: "https://mera.mw/",
   },
-  { label: "PIL — Petroleum Importers Ltd", url: "https://www.pil.mw" },
-  { label: "Ministry of Transport", url: "https://www.mot.gov.mw" },
+  { label: "PIL — Petroleum Importers Ltd", url: "https://pilmalawi.mw/" },
+  { label: "Ministry of Transport", url: "https://www.mot.gov.mw/" },
   {
     label: "Dept. of Immigration & Citizenship",
-    url: "https://www.immigration.gov.mw",
+    url: "https://www.immigration.gov.mw/",
   },
-  { label: "Malawi Police Service", url: "https://www.police.gov.mw" },
+  { label: "Malawi Police Service", url: "https://www.police.gov.mw/" },
 ];
 
 /**
