@@ -126,7 +126,7 @@ function SidebarNavLink({ item, onClick }) {
           "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
           isActive
             ? "bg-primary-500 text-white shadow-sm"
-            : "text-gray-500 hover:text-gray-900 hover:bg-gray-100",
+            : "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
         )
       }
     >
@@ -137,7 +137,7 @@ function SidebarNavLink({ item, onClick }) {
               "w-4 h-4 flex-shrink-0 transition-colors duration-200",
               isActive
                 ? "text-white"
-                : "text-gray-400 group-hover:text-gray-600",
+                : "text-gray-400 group-hover:text-gray-600 dark:text-gray-400 dark:group-hover:text-gray-100",
             )}
             aria-hidden="true"
           />
@@ -165,12 +165,14 @@ function SidebarContent({ onNavClick }) {
   return (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-100 flex-shrink-0">
+      <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
         <div className="w-9 h-9 rounded-xl bg-primary-500 flex items-center justify-center flex-shrink-0">
           <Truck className="w-5 h-5 text-white" aria-hidden="true" />
         </div>
         <div className="leading-none min-w-0">
-          <p className="font-display font-bold text-gray-900 text-base">TAM</p>
+          <p className="font-display font-bold text-gray-900 dark:text-gray-100 text-base">
+            TAM
+          </p>
           <p className="font-body text-gray-400 text-2xs uppercase tracking-widest mt-0.5">
             Member Portal
           </p>
@@ -178,15 +180,15 @@ function SidebarContent({ onNavClick }) {
       </div>
 
       {/* User identity */}
-      <div className="px-4 py-4 border-b border-gray-100 flex-shrink-0">
+      <div className="px-4 py-4 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
         <div className="flex items-start gap-3">
           <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 border border-gray-200">
-            <span className="font-body font-semibold text-gray-600 text-sm uppercase">
+            <span className="font-body font-semibold text-gray-600 dark:text-gray-300 text-sm uppercase">
               {user?.email?.[0] ?? "M"}
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-body font-semibold text-gray-900 text-sm truncate">
+            <p className="font-body font-semibold text-gray-900 dark:text-gray-100 text-sm truncate">
               {user?.email ?? "Member"}
             </p>
             <div className="mt-1.5">
@@ -207,14 +209,14 @@ function SidebarContent({ onNavClick }) {
       </nav>
 
       {/* Bottom — membership info + logout */}
-      <div className="px-3 py-4 border-t border-gray-100 space-y-2 flex-shrink-0">
+      <div className="px-3 py-4 border-t border-gray-100 dark:border-gray-800 space-y-2 flex-shrink-0">
         {status === "active" && (
-          <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-secondary-50 border border-secondary-100">
+          <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-secondary-50 dark:bg-green-950 border border-secondary-100 dark:border-green-900">
             <Shield
-              className="w-4 h-4 text-secondary-500 flex-shrink-0 mt-0.5"
+              className="w-4 h-4 text-secondary-500 dark:text-green-400 flex-shrink-0 mt-0.5"
               aria-hidden="true"
             />
-            <p className="font-body text-secondary-700 text-xs leading-relaxed">
+            <p className="font-body text-secondary-700 dark:text-green-300 text-xs leading-relaxed">
               Your membership is active and compliant.
             </p>
           </div>
@@ -226,8 +228,8 @@ function SidebarContent({ onNavClick }) {
           disabled={isLoggingOut}
           className={cn(
             "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl",
-            "font-body text-sm font-medium text-gray-500",
-            "hover:text-primary-600 hover:bg-primary-50",
+            "font-body text-sm font-medium text-gray-500 dark:text-gray-400",
+            "hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-950",
             "transition-all duration-200",
             "focus-visible:outline-none focus-visible:ring-2",
             "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
@@ -269,7 +271,7 @@ function Topbar({ onMenuOpen, notificationCount = 0 }) {
   const navigate = useNavigate();
 
   return (
-    <header className="h-14 border-b border-gray-100 bg-white flex items-center justify-between px-4 sm:px-6 flex-shrink-0">
+    <header className="h-14 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex items-center justify-between px-4 sm:px-6 flex-shrink-0">
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -277,7 +279,7 @@ function Topbar({ onMenuOpen, notificationCount = 0 }) {
           aria-label="Open navigation menu"
           className={cn(
             "lg:hidden w-9 h-9 rounded-lg flex items-center justify-center",
-            "text-gray-500 hover:text-gray-900 hover:bg-gray-100",
+            "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
             "transition-colors duration-200",
             "focus-visible:outline-none focus-visible:ring-2",
             "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
@@ -285,7 +287,7 @@ function Topbar({ onMenuOpen, notificationCount = 0 }) {
         >
           <Menu className="w-5 h-5" aria-hidden="true" />
         </button>
-        <h1 className="font-display font-bold text-gray-900 text-lg">
+        <h1 className="font-display font-bold text-gray-900 dark:text-gray-100 text-lg">
           {pageTitle}
         </h1>
       </div>
@@ -301,7 +303,7 @@ function Topbar({ onMenuOpen, notificationCount = 0 }) {
           }
           className={cn(
             "relative w-9 h-9 rounded-lg flex items-center justify-center",
-            "text-gray-500 hover:text-gray-900 hover:bg-gray-100",
+            "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
             "transition-colors duration-200",
             "focus-visible:outline-none focus-visible:ring-2",
             "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
@@ -381,7 +383,7 @@ function MobileDrawer({ open, onClose }) {
             initial="hidden"
             animate="visible"
             exit="exit"
-            className="fixed top-0 left-0 h-full w-72 bg-white border-r border-gray-100 z-50 lg:hidden flex flex-col"
+            className="fixed top-0 left-0 h-full w-72 bg-white dark:bg-gray-900 border-r border-gray-100 dark:border-gray-800 z-50 lg:hidden flex flex-col"
           >
             <div className="flex items-center justify-end px-4 pt-4 flex-shrink-0">
               <button
@@ -428,10 +430,10 @@ export default function MemberLayout() {
   const unreadCount = unreadData?.count ?? 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex font-body">
+    <div className="tam-member min-h-screen bg-gray-50 dark:bg-gray-950 flex font-body">
       {/* Desktop sidebar */}
       <aside
-        className="hidden lg:flex lg:flex-col lg:w-60 xl:w-64 bg-white border-r border-gray-100 flex-shrink-0 sticky top-0 h-screen overflow-hidden"
+        className="hidden lg:flex lg:flex-col lg:w-60 xl:w-64 bg-white dark:bg-gray-900 border-r border-gray-100 dark:border-gray-800 flex-shrink-0 sticky top-0 h-screen overflow-hidden"
         aria-label="Member portal sidebar"
       >
         <SidebarContent />
