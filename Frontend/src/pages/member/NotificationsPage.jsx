@@ -411,20 +411,25 @@ function StatusBadge({ status }) {
 
 function ColHeader() {
   return (
-    <div className="flex items-center gap-4 px-6 py-2.5 bg-gray-50/70 border-b border-gray-100">
+    <div className="flex items-center gap-4 px-6 py-2.5 bg-gray-50/70 dark:bg-white/5 border-b border-gray-100 dark:border-white/10">
       <div className="w-9 flex-shrink-0" />
-      <span className="flex-1 min-w-0 font-body text-2xs font-semibold text-gray-400 uppercase tracking-wider">
+
+      <span className="flex-1 min-w-0 font-body text-2xs font-semibold text-gray-400 dark:text-gray-300 uppercase tracking-wider">
         Notification
       </span>
-      <span className="w-28 flex-shrink-0 font-body text-2xs font-semibold text-gray-400 uppercase tracking-wider">
+
+      <span className="w-28 flex-shrink-0 font-body text-2xs font-semibold text-gray-400 dark:text-gray-300 uppercase tracking-wider">
         Type
       </span>
-      <span className="w-16 flex-shrink-0 font-body text-2xs font-semibold text-gray-400 uppercase tracking-wider text-right">
+
+      <span className="w-16 flex-shrink-0 font-body text-2xs font-semibold text-gray-400 dark:text-gray-300 uppercase tracking-wider text-right">
         Time
       </span>
-      <span className="w-16 flex-shrink-0 font-body text-2xs font-semibold text-gray-400 uppercase tracking-wider">
+
+      <span className="w-16 flex-shrink-0 font-body text-2xs font-semibold text-gray-400 dark:text-gray-300 uppercase tracking-wider">
         Status
       </span>
+
       <div className="w-20 flex-shrink-0" />
     </div>
   );
