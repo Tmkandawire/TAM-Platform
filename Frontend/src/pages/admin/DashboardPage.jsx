@@ -442,6 +442,7 @@ export default function AdminDashboardPage() {
   const {
     data: memberStatsData,
     isLoading: memberStatsLoading,
+    isError: memberStatsError,
     refetch: refetchMemberStats,
   } = useQuery({
     queryKey: ADMIN_QUERY_KEYS.memberStats,
