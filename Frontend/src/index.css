@@ -10,6 +10,207 @@
     --secondary-500: #34a853;
   }
 
+  /* ── Dark mode base ── */
+  .dark body {
+    @apply bg-gray-950 text-gray-100;
+  }
+
+  .dark .tam-card {
+    @apply bg-gray-900 border-gray-800;
+  }
+
+  .dark .tam-input {
+    @apply bg-gray-900 border-gray-700 text-gray-100 placeholder-gray-500;
+  }
+
+  /* ── Dark mode — scoped to authenticated portals only ── */
+  /* Public pages are never affected */
+
+  .dark .tam-admin,
+  .dark .tam-member {
+    color-scheme: dark;
+  }
+
+  /* Surfaces */
+  .dark .tam-admin .bg-white,
+  .dark .tam-member .bg-white {
+    background-color: rgb(17 24 39);
+  }
+
+  .dark .tam-admin .bg-gray-50,
+  .dark .tam-member .bg-gray-50 {
+    background-color: rgb(15 23 42);
+  }
+
+  .dark .tam-admin .bg-gray-100,
+  .dark .tam-member .bg-gray-100 {
+    background-color: rgb(31 41 55);
+  }
+
+  /* Borders */
+  .dark .tam-admin .border-gray-100,
+  .dark .tam-member .border-gray-100 {
+    border-color: rgb(31 41 55);
+  }
+
+  .dark .tam-admin .border-gray-50,
+  .dark .tam-member .border-gray-50 {
+    border-color: rgb(31 41 55);
+  }
+
+  .dark .tam-admin .border-gray-200,
+  .dark .tam-member .border-gray-200 {
+    border-color: rgb(55 65 81);
+  }
+
+  /* Text */
+  .dark .tam-admin .text-gray-900,
+  .dark .tam-member .text-gray-900 {
+    color: rgb(249 250 251);
+  }
+
+  .dark .tam-admin .text-gray-800,
+  .dark .tam-member .text-gray-800 {
+    color: rgb(243 244 246);
+  }
+
+  .dark .tam-admin .text-gray-700,
+  .dark .tam-member .text-gray-700 {
+    color: rgb(229 231 235);
+  }
+
+  .dark .tam-admin .text-gray-600,
+  .dark .tam-member .text-gray-600 {
+    color: rgb(209 213 219);
+  }
+
+  .dark .tam-admin .text-gray-500,
+  .dark .tam-member .text-gray-500 {
+    color: rgb(156 163 175);
+  }
+
+  .dark .tam-admin .text-gray-400,
+  .dark .tam-member .text-gray-400 {
+    color: rgb(107 114 128);
+  }
+
+  /* Inputs */
+  .dark .tam-admin input,
+  .dark .tam-admin textarea,
+  .dark .tam-admin select,
+  .dark .tam-member input,
+  .dark .tam-member textarea,
+  .dark .tam-member select {
+    background-color: rgb(17 24 39);
+    border-color: rgb(55 65 81);
+    color: rgb(249 250 251);
+  }
+
+  .dark .tam-admin input::placeholder,
+  .dark .tam-admin textarea::placeholder,
+  .dark .tam-member input::placeholder,
+  .dark .tam-member textarea::placeholder {
+    color: rgb(107 114 128);
+  }
+
+  /* Tables */
+  .dark .tam-admin tr,
+  .dark .tam-member tr {
+    border-color: rgb(31 41 55);
+  }
+
+  .dark .tam-admin thead tr,
+  .dark .tam-member thead tr {
+    background-color: rgb(17 24 39);
+  }
+
+  .dark .tam-admin tbody tr:hover,
+  .dark .tam-member tbody tr:hover {
+    background-color: rgb(31 41 55);
+  }
+
+  /* Dividers */
+  .dark .tam-admin .divide-gray-100 > * + *,
+  .dark .tam-member .divide-gray-100 > * + * {
+    border-color: rgb(31 41 55);
+  }
+
+  .dark .tam-admin .divide-gray-50 > * + *,
+  .dark .tam-member .divide-gray-50 > * + * {
+    border-color: rgb(31 41 55);
+  }
+
+  /* ── Section card headers — the gray strip at top of each card ── */
+  .dark .tam-member .bg-gray-50\/50 {
+    background-color: rgb(30 41 59); /* slate-800 */
+  }
+
+  /* ── All heading text must be fully bright in dark mode ── */
+  .dark .tam-member .font-display {
+    color: rgb(249 250 251);
+  }
+
+  /* ── Table / list header labels ── */
+  .dark .tam-member .uppercase {
+    color: rgb(156 163 175);
+  }
+
+  .dark .tam-admin .uppercase {
+    color: rgb(156 163 175);
+  }
+
+  /* ── Tab bar buttons ── */
+  .dark .tam-member button {
+    color: rgb(209 213 219);
+  }
+
+  /* Active tab */
+  .dark .tam-member button[aria-selected="true"],
+  .dark .tam-member button.text-primary-700 {
+    color: rgb(252 165 165);
+  }
+
+  /* ── Settings sidebar nav active state ── */
+  .dark .tam-member .bg-primary-50 {
+    background-color: rgb(69 10 10);
+  }
+
+  .dark .tam-member .text-primary-700 {
+    color: rgb(252 165 165);
+  }
+
+  /* ── Section card header gray bars ── */
+  .dark .tam-admin .bg-gray-50\/50,
+  .dark .tam-member .bg-gray-50\/50 {
+    background-color: rgb(30 41 59);
+  }
+
+  /* ── Modal/dialog backgrounds ── */
+  .dark .tam-member .bg-white.rounded-xl,
+  .dark .tam-member .bg-white.rounded-2xl {
+    background-color: rgb(17 24 39);
+  }
+
+  /* ── Notification modal specifically ── */
+  .dark .tam-member [role="dialog"] {
+    background-color: rgb(17 24 39);
+    border-color: rgb(31 41 55);
+  }
+
+  /* ── Active Member badge ── */
+  .dark .tam-member .bg-secondary-50 {
+    background-color: rgb(5 46 22);
+  }
+
+  .dark .tam-member .text-secondary-700 {
+    color: rgb(134 239 172);
+  }
+
+  /* ── Compliance banner ── */
+  .dark .tam-member .border-secondary-200 {
+    border-color: rgb(20 83 45);
+  }
+
   * {
     box-sizing: border-box;
   }
