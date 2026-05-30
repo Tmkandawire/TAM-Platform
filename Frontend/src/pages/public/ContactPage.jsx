@@ -953,19 +953,19 @@ const PARTNER_LINKS = [
     abbr: "MACRA",
     name: "Malawi Communications Regulatory Authority",
     role: "Communications & Frequency Regulator",
-    url: "https://www.macra.mw",
+    url: "https://macra.mw/",
   },
   {
     abbr: "MERA",
     name: "Malawi Energy Regulatory Authority",
     role: "Petroleum & Energy Regulator",
-    url: "https://www.mera.mw",
+    url: "https://mera.mw/",
   },
   {
     abbr: "PIL",
     name: "Petroleum Importers Limited",
     role: "Fuel Importation & Distribution",
-    url: "https://www.pil.mw",
+    url: "https://pilmalawi.mw/",
   },
   {
     abbr: "MoT",
@@ -977,7 +977,7 @@ const PARTNER_LINKS = [
     abbr: "DIC",
     name: "Department of Immigration & Citizenship",
     role: "Cross-Border Permits & Visas",
-    url: "https://www.immigration.gov.mw",
+    url: "https://www.immigration.gov.mw/",
   },
   {
     abbr: "MPS",
