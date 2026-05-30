@@ -22,10 +22,13 @@ import {
   ChevronRight,
   Truck,
   Mail,
+  Sun,
+  Moon,
 } from "lucide-react";
 import useAuthStore from "../../store/authStore.js";
 import { useAuth } from "../../hooks/useAuth.js";
 import { useFocusTrap } from "../../hooks/useFocusTrap.js";
+import { useTheme } from "../../hooks/useTheme.js";
 import { cn } from "../../utils/cn.js";
 import LogoutConfirmModal from "../common/LogoutConfirmModal.jsx";
 
@@ -82,6 +85,35 @@ const NAV_ITEMS = [
   },
 ];
 
+// ─── Theme toggle button ─────────────────────────────────────────────────────────
+
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={
+        theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+      }
+      className={cn(
+        "w-9 h-9 rounded-lg flex items-center justify-center",
+        "text-gray-400 hover:text-gray-700 hover:bg-gray-100",
+        "dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800",
+        "transition-colors duration-200",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
+        "focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900",
+      )}
+    >
+      {theme === "dark" ? (
+        <Sun className="w-4 h-4" aria-hidden="true" />
+      ) : (
+        <Moon className="w-4 h-4" aria-hidden="true" />
+      )}
+    </button>
+  );
+}
+
 // ─── Sidebar nav link ─────────────────────────────────────────────────────────
 
 function SidebarNavLink({ item, onClick }) {
@@ -100,7 +132,7 @@ function SidebarNavLink({ item, onClick }) {
           "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
           isActive
             ? "bg-primary-500 text-white shadow-sm"
-            : "text-gray-500 hover:text-gray-900 hover:bg-gray-100",
+            : "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
         )
       }
     >
@@ -138,20 +170,22 @@ function SidebarContent({ onNavClick }) {
   return (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-100 flex-shrink-0">
+      <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
         <div className="w-9 h-9 rounded-xl bg-primary-500 flex items-center justify-center flex-shrink-0">
           <Truck className="w-5 h-5 text-white" aria-hidden="true" />
         </div>
         <div className="leading-none min-w-0">
-          <p className="font-display font-bold text-gray-900 text-base">TAM</p>
-          <p className="font-body text-gray-400 text-2xs uppercase tracking-widest mt-0.5">
+          <p className="font-display font-bold text-gray-900 dark:text-gray-100 text-base">
+            TAM
+          </p>
+          <p className="font-body text-gray-400 dark:text-gray-500 text-2xs uppercase tracking-widest mt-0.5">
             Admin Portal
           </p>
         </div>
       </div>
 
       {/* Admin identity */}
-      <div className="px-4 py-4 border-b border-gray-100 flex-shrink-0">
+      <div className="px-4 py-4 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
         <div className="flex items-start gap-3">
           <div className="w-9 h-9 rounded-full bg-gray-900 flex items-center justify-center flex-shrink-0 border border-gray-700">
             <span className="font-body font-semibold text-white text-sm uppercase">
@@ -159,7 +193,7 @@ function SidebarContent({ onNavClick }) {
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-body font-semibold text-gray-900 text-sm truncate">
+            <p className="font-body font-semibold text-gray-900 dark:text-gray-100 text-sm truncate">
               {user?.email ?? "Admin"}
             </p>
             <div className="mt-1.5">
@@ -183,7 +217,7 @@ function SidebarContent({ onNavClick }) {
       </nav>
 
       {/* Bottom — logout */}
-      <div className="px-3 py-4 border-t border-gray-100 flex-shrink-0">
+      <div className="hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-950">
         <button
           type="button"
           onClick={() => setShowLogout(true)}
@@ -232,7 +266,7 @@ function Topbar({ onMenuOpen }) {
   const pageTitle = usePageTitle();
 
   return (
-    <header className="h-14 border-b border-gray-100 bg-white flex items-center justify-between px-4 sm:px-6 flex-shrink-0">
+    <header className="h-14 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex items-center justify-between px-4 sm:px-6 flex-shrink-0">
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -240,7 +274,7 @@ function Topbar({ onMenuOpen }) {
           aria-label="Open navigation menu"
           className={cn(
             "lg:hidden w-9 h-9 rounded-lg flex items-center justify-center",
-            "text-gray-500 hover:text-gray-900 hover:bg-gray-100",
+            "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
             "transition-colors duration-200",
             "focus-visible:outline-none focus-visible:ring-2",
             "focus-visible:ring-primary-500 focus-visible:ring-offset-2",
@@ -248,9 +282,12 @@ function Topbar({ onMenuOpen }) {
         >
           <Menu className="w-5 h-5" aria-hidden="true" />
         </button>
-        <h1 className="font-display font-bold text-gray-900 text-lg">
+        <h1 className="font-display font-bold text-gray-900 dark:text-gray-100 text-lg">
           {pageTitle}
         </h1>
+      </div>
+      <div className="flex items-center gap-2">
+        <ThemeToggle />
       </div>
     </header>
   );
@@ -317,7 +354,7 @@ function MobileDrawer({ open, onClose }) {
             initial="hidden"
             animate="visible"
             exit="exit"
-            className="fixed top-0 left-0 h-full w-72 bg-white border-r border-gray-100 z-50 lg:hidden flex flex-col"
+            className="fixed top-0 left-0 h-full w-72 bg-white dark:bg-gray-900 border-r border-gray-100 dark:border-gray-800 z-50 lg:hidden flex flex-col"
           >
             <div className="flex items-center justify-end px-4 pt-4 flex-shrink-0">
               <button
@@ -359,10 +396,10 @@ export default function AdminLayout() {
   }, [pathname]);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex font-body">
+    <div className="tam-admin min-h-screen bg-gray-50 dark:bg-gray-950 flex font-body">
       {/* Desktop sidebar */}
       <aside
-        className="hidden lg:flex lg:flex-col lg:w-60 xl:w-64 bg-white border-r border-gray-100 flex-shrink-0 sticky top-0 h-screen overflow-hidden"
+        className="hidden lg:flex lg:flex-col lg:w-60 xl:w-64 bg-white dark:bg-gray-900 border-r border-gray-100 dark:border-gray-800 flex-shrink-0 sticky top-0 h-screen overflow-hidden"
         aria-label="Admin portal sidebar"
       >
         <SidebarContent />
