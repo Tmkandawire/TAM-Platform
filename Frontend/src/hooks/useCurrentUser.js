@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import useAuthStore from "../store/authStore.js";
 import authService from "../services/auth.service.js";
 
@@ -28,11 +28,17 @@ import authService from "../services/auth.service.js";
 
 export const CURRENT_USER_QUERY_KEY = ["auth", "me"];
 
+const AUTH_CHANNEL = "tam:auth:channel";
+
 /**
  * @returns {{ isLoading: boolean, isError: boolean, isFetched: boolean }}
  */
 export function useCurrentUser() {
   const { isHydrated, setUser, logout } = useAuthStore();
+
+  const isRevalidating = useRef(false);
+
+  const queryClient = useQueryClient();
 
   const { data, isLoading, isError, isFetched, error } = useQuery({
     queryKey: CURRENT_USER_QUERY_KEY,
@@ -49,32 +55,78 @@ export function useCurrentUser() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Success — sync user into store, marks isVerified: true
+  // Success — sync user into store
   useEffect(() => {
     if (!data) return;
+
     const user = data?.data ?? data;
-    if (user) setUser(user);
+
+    if (!user) return;
+
+    setUser(user);
+
+    // Only broadcast if this wasn't triggered by another tab
+    if (!isRevalidating.current) {
+      try {
+        const ch = new BroadcastChannel(AUTH_CHANNEL);
+
+        ch.postMessage({ type: "LOGIN" });
+
+        ch.close();
+      } catch (_) {}
+    }
+
+    isRevalidating.current = false;
   }, [data, setUser]);
 
-  // Failure — only hard-logout on 401; leave session intact for 5xx / network errors.
-  // logout() also sets isVerified: true so ProtectedRoute stops showing the loader
-  // and redirects to /login.
+  // Failure — only hard-logout on 401
   useEffect(() => {
     if (!isError) return;
+
     const status = error?.status ?? 0;
+
     if (status === 401) {
       logout();
+
+      if (!isRevalidating.current) {
+        try {
+          const ch = new BroadcastChannel(AUTH_CHANNEL);
+
+          ch.postMessage({ type: "LOGOUT" });
+
+          ch.close();
+        } catch (_) {}
+      }
     }
-    // 5xx / network (status 0) — server temporarily unavailable, cookie still valid.
-    // We must still mark isVerified so ProtectedRoute doesn't spin forever.
-    // Keep isAuthenticated as-is (false on fresh load, true if previously set).
-    // The user will see a loader briefly then be redirected if truly unauthenticated.
+
     if (status !== 401) {
-      // Mark verified without changing authentication state so ProtectedRoute
-      // can make a decision based on the current isAuthenticated value.
       useAuthStore.setState({ isVerified: true });
     }
+
+    isRevalidating.current = false;
   }, [isError, error, logout]);
+
+  // Listen for auth changes from other tabs
+  useEffect(() => {
+    let ch;
+
+    try {
+      ch = new BroadcastChannel(AUTH_CHANNEL);
+
+      ch.onmessage = (e) => {
+        if (e.data?.type === "LOGIN" || e.data?.type === "LOGOUT") {
+          // Prevent rebroadcast loop
+          isRevalidating.current = true;
+
+          queryClient.invalidateQueries({
+            queryKey: CURRENT_USER_QUERY_KEY,
+          });
+        }
+      };
+    } catch (_) {}
+
+    return () => ch?.close();
+  }, [queryClient]);
 
   return { isLoading, isError, isFetched };
 }
