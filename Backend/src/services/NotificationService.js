@@ -35,7 +35,7 @@ import {
   NOTIFICATION_TYPE,
 } from "../constants/notificationTypes.js";
 import logger from "../utils/logger.js";
-import emailService from "../email/EmailService.js";
+import emailService from "../email/emailService.js";
 
 /* ─────────────────────────────────────────────
    ERRORS

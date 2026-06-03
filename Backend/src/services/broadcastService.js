@@ -9,7 +9,7 @@ import Broadcast, {
 } from "../models/Broadcast.js";
 import { NOTIFICATION_TYPE } from "../constants/notificationTypes.js";
 import notificationService from "./NotificationService.js";
-import emailService from "../email/EmailService.js";
+import emailService from "../email/emailService.js";
 import broadcastFactory from "../document/broadcastFactory.js";
 import logger from "../utils/logger.js";
 import auditService from "./auditService.js";
