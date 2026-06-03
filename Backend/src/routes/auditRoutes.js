@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { authorize } from "../middleware/authorize.js";
+import { authorize, atLeastRole } from "../middleware/authorize.js";
+import { ROLES } from "../constants/roles.js";
 import { adminActionLimiter } from "../middleware/rateLimitMiddleware.js";
 
 import {
@@ -12,7 +13,7 @@ const router = Router();
 
 /* GLOBAL ADMIN GUARD */
 router.use(protect);
-router.use(authorize("admin"));
+router.use(atLeastRole(ROLES.ADMIN));
 
 /* AUDIT LOGS */
 router.get("/", adminActionLimiter, getAuditLogs);

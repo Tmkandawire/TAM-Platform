@@ -5,11 +5,12 @@ import {
   resendAdminNotification,
 } from "../controllers/adminController.js";
 import { protect } from "../middleware/authMiddleware.js";
-import { authorize } from "../middleware/authorize.js";
+import { authorize, atLeastRole } from "../middleware/authorize.js";
+import { ROLES } from "../constants/roles.js";
 
 const router = express.Router();
 
-router.use(protect, authorize("admin"));
+router.use(protect, atLeastRole(ROLES.ADMIN));
 
 router.get("/", getAdminNotifications);
 router.delete("/:id", deleteAdminNotification);

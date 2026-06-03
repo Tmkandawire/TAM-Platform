@@ -24,7 +24,8 @@ import {
   getUnreadCount,
 } from "../controllers/contactController.js";
 import { protect } from "../middleware/authMiddleware.js";
-import { authorize } from "../middleware/authorize.js";
+import { authorize, atLeastRole } from "../middleware/authorize.js";
+import { ROLES } from "../constants/roles.js";
 import { authRateLimiter } from "../middleware/rateLimitMiddleware.js";
 import rateLimit from "express-rate-limit";
 import csrfProtection from "../middleware/csrfMiddleware.js";
@@ -57,7 +58,7 @@ export const adminContactRouter = express.Router();
 
 adminContactRouter.use(
   protect,
-  authorize("admin"),
+  atLeastRole(ROLES.ADMIN),
   csrfProtection,
   authRateLimiter,
 );

@@ -1,6 +1,7 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { authorize } from "../middleware/authorize.js";
+import { authorize, atLeastRole } from "../middleware/authorize.js";
+import { ROLES } from "../constants/roles.js";
 import { adminActionLimiter } from "../middleware/rateLimitMiddleware.js";
 import { validate } from "../middleware/validateMiddleware.js";
 
@@ -23,7 +24,7 @@ const router = express.Router();
 
 /* GLOBAL ADMIN GUARD */
 router.use(protect);
-router.use(authorize("admin"));
+router.use(atLeastRole(ROLES.ADMIN));
 
 /* QUEUE
  * Mounted at /admin/documents in routes/index.js.

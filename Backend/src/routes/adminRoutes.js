@@ -16,13 +16,14 @@ import {
 } from "../controllers/adminController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
-import { authorize } from "../middleware/authorize.js";
+import { authorize, atLeastRole } from "../middleware/authorize.js";
+import { ROLES } from "../constants/roles.js";
 import { authRateLimiter } from "../middleware/rateLimitMiddleware.js";
 import csrfProtection from "../middleware/csrfMiddleware.js";
 
 const router = express.Router();
 
-router.use(protect, authorize("admin"), csrfProtection, authRateLimiter);
+router.use(protect, atLeastRole(ROLES.ADMIN), csrfProtection, authRateLimiter);
 router.param("id", (req, _res, next, id) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return next(
