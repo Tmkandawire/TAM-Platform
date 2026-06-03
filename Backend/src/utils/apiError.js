@@ -1,3 +1,4 @@
+// A custom error class for API errors, extending the built-in Error class.
 class ApiError extends Error {
   constructor(statusCodeOrOptions = {}, message, errors = [], code) {
     const opts =
