@@ -50,7 +50,7 @@
  *  throw ValidationError.dto("email", "Email is already registered.", "DUPLICATE_VALUE");
  */
 
-import ApiError from "../utils/apiError.js";
+import ApiError from "../utils/ApiError.js";
 import { normalizeZodErrors } from "../shared/normalizeZodErrors.js";
 
 /* ─────────────────────────────────────────────
