@@ -28,7 +28,7 @@
 
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/apiResponse.js";
-import settingsService from "../services/SettingsService.js";
+import settingsService from "../services/settingsService.js";
 
 /* ─────────────────────────────────────────────
    GET /settings/notification-preferences

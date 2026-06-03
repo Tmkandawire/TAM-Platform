@@ -52,7 +52,7 @@ import logger from "../utils/logger.js";
 import broadcastService, {
   BroadcastValidationError,
   BroadcastDuplicateError,
-} from "../services/BroadcastService.js";
+} from "../services/broadcastService.js";
 import { validateBroadcastPayload } from "../validators/broadcastValidator.js";
 import { ValidationError, ConflictError } from "../errors/index.js";
 
