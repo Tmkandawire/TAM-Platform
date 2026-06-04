@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import useAuthStore from "../store/authStore.js";
 import authService from "../services/auth.service.js";
+import { setCsrfToken } from "../services/api.js";
 
 /**
  * @file useCurrentUser.js
@@ -62,6 +63,8 @@ export function useCurrentUser() {
     const user = data?.data ?? data;
 
     if (!user) return;
+
+    if (user.csrfToken) setCsrfToken(user.csrfToken);
 
     setUser(user);
 

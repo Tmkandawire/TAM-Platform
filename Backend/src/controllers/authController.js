@@ -235,8 +235,17 @@ export const logout = asyncHandler(async (req, res) => {
 
 // ME
 export const me = asyncHandler(async (req, res) => {
-  const response = ApiResponse.ok(req.user, "User fetched.");
-  return res.status(response.statusCode).json(response);
+  const newCsrfToken = crypto.randomBytes(32).toString("hex");
+
+  const response = ApiResponse.ok(
+    { ...req.user, csrfToken: newCsrfToken },
+    "User fetched.",
+  );
+
+  return res
+    .cookie("csrfToken", newCsrfToken, CSRF_COOKIE_OPTIONS)
+    .status(response.statusCode)
+    .json(response);
 });
 
 // COMPLETE ONBOARDING
