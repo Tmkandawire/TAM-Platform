@@ -36,15 +36,16 @@ import { resolveErrorMessage } from "../utils/errorMessages.js";
 let isRedirectingToLogin = false;
 
 /**
- * Read a cookie value by name from document.cookie.
- * Returns null if the cookie is not present.
+ * In-memory CSRF token store.
+ * Populated after login/register/refresh responses.
  */
-function getCookie(name) {
-  const match = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.split("=")[1]) : null;
-}
+let _csrfToken = null;
+
+export const setCsrfToken = (token) => {
+  _csrfToken = token;
+};
+
+export const getCsrfToken = () => _csrfToken;
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
@@ -60,9 +61,8 @@ api.interceptors.request.use((config) => {
   const MUTATING_METHODS = ["post", "put", "patch", "delete"];
 
   if (MUTATING_METHODS.includes(config.method?.toLowerCase())) {
-    const csrfToken = getCookie("csrfToken");
-    if (csrfToken) {
-      config.headers["X-CSRF-Token"] = csrfToken;
+    if (_csrfToken) {
+      config.headers["X-CSRF-Token"] = _csrfToken;
     }
   }
 
@@ -94,8 +94,17 @@ api.interceptors.response.use(
       originalRequest._retried = true;
 
       try {
-        await api.post("/auth/refresh");
-        isRedirectingToLogin = false; // Reset redirect guard on successful refresh
+        const refreshResponse = await api.post("/auth/refresh");
+
+        const newToken =
+          refreshResponse?.data?.csrfToken ?? refreshResponse?.csrfToken;
+
+        if (newToken) {
+          setCsrfToken(newToken);
+        }
+
+        isRedirectingToLogin = false;
+
         return api(originalRequest);
       } catch {
         // Refresh failed — redirect once, never again this page lifecycle.

@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import useAuthStore from "../store/authStore.js";
 import authService from "../services/auth.service.js";
+import { setCsrfToken } from "../services/api.js";
 
 /**
  * Role → default home route.
@@ -34,20 +35,11 @@ export function useAuth() {
     mutationFn: authService.login,
     onSuccess: (data) => {
       const userData = data?.data ?? data;
+      if (userData.csrfToken) setCsrfToken(userData.csrfToken);
       login(userData);
-
       toast.success(`Welcome back, ${userData.email}`);
-
-      /**
-       * Redirect priority:
-       *  1. `from` — the full URL the user was trying to reach before being
-       *              sent to /login (set by ProtectedRoute).
-       *  2. Role home — their default dashboard if no prior destination.
-       *  3. "/" — absolute fallback.
-       */
       const destination =
         location.state?.from ?? ROLE_HOME[userData.role] ?? "/";
-
       navigate(destination, { replace: true });
     },
     onError: (error) => {
@@ -68,16 +60,10 @@ export function useAuth() {
   const registerMutation = useMutation({
     mutationFn: authService.register,
     onSuccess: (data) => {
-      // Backend now creates a session on registration and returns the user
-      // object with auth cookies. Populate the store so ProtectedRoute
-      // knows the user is authenticated before /auth/me resolves.
       const userData = data?.data ?? data;
+      if (userData.csrfToken) setCsrfToken(userData.csrfToken);
       login(userData);
-
       toast.success("Account created! Let's set up your profile.");
-
-      // Redirect to onboarding — user is already authenticated (cookies set).
-      // No login step needed.
       navigate("/onboarding", { replace: true });
     },
     onError: (error) => {

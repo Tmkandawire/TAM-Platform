@@ -122,7 +122,7 @@ export const register = asyncHandler(async (req, res) => {
   });
 
   const response = ApiResponse.created(
-    safeUser,
+    { ...safeUser, csrfToken },
     "Account created successfully.",
   );
 
@@ -160,7 +160,10 @@ export const login = asyncHandler(async (req, res) => {
     requestId: req.context?.requestId,
   });
 
-  const response = ApiResponse.ok(safeUser, "Login successful.");
+  const response = ApiResponse.ok(
+    { ...safeUser, csrfToken },
+    "Login successful.",
+  );
 
   return setAuthCookies(res, { accessToken, refreshToken, csrfToken })
     .status(response.statusCode)
@@ -185,7 +188,10 @@ export const refresh = asyncHandler(async (req, res) => {
     requestId: req.context?.requestId,
   });
 
-  const response = ApiResponse.ok(null, "Token refreshed.");
+  const response = ApiResponse.ok(
+    { csrfToken: newCsrfToken },
+    "Token refreshed.",
+  );
 
   return setAuthCookies(res, {
     accessToken,
