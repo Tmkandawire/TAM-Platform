@@ -59,10 +59,19 @@ const authService = {
    *
    * @param {FormData} formData
    */
-  completeOnboarding: (formData) =>
-    api.post("/auth/onboarding/complete", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    }),
+  completeOnboarding: (formData) => {
+    const csrfToken = document.cookie
+      .split("; ")
+      .find((row) => row.startsWith("csrfToken="))
+      ?.split("=")[1];
+
+    return api.post("/auth/onboarding/complete", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+        ...(csrfToken ? { "X-CSRF-Token": decodeURIComponent(csrfToken) } : {}),
+      },
+    });
+  },
 };
 
 export default authService;
