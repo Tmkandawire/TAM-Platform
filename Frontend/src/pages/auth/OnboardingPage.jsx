@@ -768,8 +768,8 @@ export default function OnboardingPage() {
     (allData) => {
       const formData = new FormData();
 
-      console.log("FILES AT SUBMIT:", files);
-      console.log("DATES AT SUBMIT:", dates);
+      console.log("FILES AT SUBMIT:", JSON.stringify(Object.keys(files)));
+      console.log("DATES AT SUBMIT:", JSON.stringify(dates));
 
       // Profile fields
       Object.entries(allData).forEach(([key, value]) => {
