@@ -234,28 +234,18 @@ export const logout = asyncHandler(async (req, res) => {
 });
 
 // GET CURRENT USER
-//
-// This endpoint returns the currently authenticated user's information,
-// including their profile data and a new CSRF token.
-//
-// It is used to populate the frontend with the user's details and ensure
-// that subsequent requests include a valid CSRF token.
-//
-// Request shape:
-//   None (authenticated via cookies)
-//
-// Response shape:
-//   { id, email, role, status, csrfToken }
+// ME
 export const me = asyncHandler(async (req, res) => {
-  const newCsrfToken = crypto.randomBytes(32).toString("hex");
+  // Reuse the existing CSRF cookie if present — generating a new token
+  // on every /auth/me call causes mismatches when refresh and me fire
+  // close together and overwrite each other's cookies.
+  const existingCsrfToken = req.cookies?.csrfToken;
+  const csrfToken = existingCsrfToken || crypto.randomBytes(32).toString("hex");
 
-  const response = ApiResponse.ok(
-    { ...req.user, csrfToken: newCsrfToken },
-    "User fetched.",
-  );
+  const response = ApiResponse.ok({ ...req.user, csrfToken }, "User fetched.");
 
   return res
-    .cookie("csrfToken", newCsrfToken, CSRF_COOKIE_OPTIONS)
+    .cookie("csrfToken", csrfToken, CSRF_COOKIE_OPTIONS)
     .status(response.statusCode)
     .json(response);
 });
