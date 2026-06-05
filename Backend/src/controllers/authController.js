@@ -233,7 +233,19 @@ export const logout = asyncHandler(async (req, res) => {
     .json(response);
 });
 
-// ME
+// GET CURRENT USER
+//
+// This endpoint returns the currently authenticated user's information,
+// including their profile data and a new CSRF token.
+//
+// It is used to populate the frontend with the user's details and ensure
+// that subsequent requests include a valid CSRF token.
+//
+// Request shape:
+//   None (authenticated via cookies)
+//
+// Response shape:
+//   { id, email, role, status, csrfToken }
 export const me = asyncHandler(async (req, res) => {
   const newCsrfToken = crypto.randomBytes(32).toString("hex");
 
