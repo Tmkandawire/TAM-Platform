@@ -768,6 +768,9 @@ export default function OnboardingPage() {
     (allData) => {
       const formData = new FormData();
 
+      console.log("FILES AT SUBMIT:", files);
+      console.log("DATES AT SUBMIT:", dates);
+
       // Profile fields
       Object.entries(allData).forEach(([key, value]) => {
         if (key === "vehicleTypes" && Array.isArray(value)) {
