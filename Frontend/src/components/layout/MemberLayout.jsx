@@ -110,8 +110,10 @@ function StatusBadge({ status }) {
 
 // ─── Sidebar nav link ─────────────────────────────────────────────────────────
 
-function SidebarNavLink({ item, onClick }) {
+function SidebarNavLink({ item, onClick, unreadCount = 0 }) {
   const Icon = item.icon;
+  const showDot = item.label === "Notifications" && unreadCount > 0;
+
   return (
     <NavLink
       to={item.path}
@@ -132,15 +134,28 @@ function SidebarNavLink({ item, onClick }) {
     >
       {({ isActive }) => (
         <>
-          <Icon
-            className={cn(
-              "w-4 h-4 flex-shrink-0 transition-colors duration-200",
-              isActive
-                ? "text-white"
-                : "text-gray-400 group-hover:text-gray-600 dark:text-gray-400 dark:group-hover:text-gray-100",
+          <div className="relative flex-shrink-0">
+            <Icon
+              className={cn(
+                "w-4 h-4 transition-colors duration-200",
+                isActive
+                  ? "text-white"
+                  : "text-gray-400 group-hover:text-gray-600 dark:text-gray-400 dark:group-hover:text-gray-100",
+              )}
+              aria-hidden="true"
+            />
+            {showDot && (
+              <span
+                className={cn(
+                  "absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border-2",
+                  isActive
+                    ? "bg-white border-primary-500"
+                    : "bg-primary-500 border-white",
+                )}
+                aria-hidden="true"
+              />
             )}
-            aria-hidden="true"
-          />
+          </div>
           <span className="flex-1 truncate">{item.label}</span>
           {isActive && (
             <ChevronRight
@@ -156,7 +171,7 @@ function SidebarNavLink({ item, onClick }) {
 
 // ─── Sidebar content ──────────────────────────────────────────────────────────
 
-function SidebarContent({ onNavClick }) {
+function SidebarContent({ onNavClick, unreadCount = 0 }) {
   const { user } = useAuthStore();
   const { logoutMutation, isLoggingOut } = useAuth();
   const [showLogout, setShowLogout] = useState(false);
@@ -204,7 +219,12 @@ function SidebarContent({ onNavClick }) {
         className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto"
       >
         {NAV_ITEMS.map((item) => (
-          <SidebarNavLink key={item.path} item={item} onClick={onNavClick} />
+          <SidebarNavLink
+            key={item.path}
+            item={item}
+            onClick={onNavClick}
+            unreadCount={unreadCount}
+          />
         ))}
       </nav>
 
@@ -344,7 +364,7 @@ const reducedDrawerVariants = {
   exit: { opacity: 0, transition: { duration: 0 } },
 };
 
-function MobileDrawer({ open, onClose }) {
+function MobileDrawer({ open, onClose, unreadCount = 0 }) {
   const drawerRef = useRef(null);
   const closeButtonRef = useRef(null);
   const prefersReducedMotion = useReducedMotion();
@@ -403,7 +423,7 @@ function MobileDrawer({ open, onClose }) {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto">
-              <SidebarContent onNavClick={onClose} />
+              <SidebarContent onNavClick={onClose} unreadCount={unreadCount} />
             </div>
           </motion.div>
         </>
@@ -436,11 +456,15 @@ export default function MemberLayout() {
         className="hidden lg:flex lg:flex-col lg:w-60 xl:w-64 bg-white dark:bg-gray-900 border-r border-gray-100 dark:border-gray-800 flex-shrink-0 sticky top-0 h-screen overflow-hidden"
         aria-label="Member portal sidebar"
       >
-        <SidebarContent />
+        <SidebarContent unreadCount={unreadCount} />
       </aside>
 
       {/* Mobile drawer */}
-      <MobileDrawer open={mobileOpen} onClose={() => setMobileOpen(false)} />
+      <MobileDrawer
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        unreadCount={unreadCount}
+      />
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
