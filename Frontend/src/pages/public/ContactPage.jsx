@@ -42,6 +42,7 @@ import {
   ChevronRight,
   Share2,
 } from "lucide-react";
+import api from "../../services/api.js";
 
 /*
  * Social platform icons are placeholders — all entries have url: null and are
@@ -505,22 +506,7 @@ function ContactForm() {
     setErrors({});
 
     try {
-      /**
-       * POST to /api/contact — your SMTP handler.
-       * Expected request body: { name, email, subject, message }
-       * Expected response: 200 OK on success, any non-2xx on failure.
-       *
-       * Replace this endpoint with your actual server route or
-       * serverless function URL (e.g. /api/send-email, /.netlify/functions/contact).
-       */
-      const response = await fetch("/api/v1/contact", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
-      });
-
-      if (!response.ok)
-        throw new Error(`Server responded with ${response.status}`);
+      await api.post("/contact", fields);
 
       setSubmitState("success");
       setFields(INITIAL_FORM);
