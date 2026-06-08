@@ -51,7 +51,7 @@ export function useCurrentUser() {
     enabled: isHydrated,
 
     retry: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     refetchOnMount: false,
     staleTime: 5 * 60 * 1000,
   });
