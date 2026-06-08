@@ -312,7 +312,7 @@ function Topbar({ onMenuOpen, notificationCount = 0 }) {
         </h1>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-shrink-0">
         <button
           type="button"
           onClick={() => navigate("/member/notifications")}
@@ -322,7 +322,7 @@ function Topbar({ onMenuOpen, notificationCount = 0 }) {
               : "Notifications"
           }
           className={cn(
-            "relative w-9 h-9 rounded-lg flex items-center justify-center",
+            "relative flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center",
             "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
             "transition-colors duration-200",
             "focus-visible:outline-none focus-visible:ring-2",
@@ -332,7 +332,7 @@ function Topbar({ onMenuOpen, notificationCount = 0 }) {
           <Bell className="w-5 h-5" aria-hidden="true" />
           {notificationCount > 0 && (
             <span
-              className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-primary-500"
+              className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-primary-500 flex-shrink-0"
               aria-hidden="true"
             />
           )}

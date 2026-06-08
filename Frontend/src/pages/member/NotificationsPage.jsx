@@ -1042,15 +1042,7 @@ export default function NotificationsPage() {
               >
                 {tab.label}
                 {tab.key === NOTIFICATION_STATUS.UNREAD && unreadCount > 0 && (
-                  <span
-                    className={cn(
-                      "inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full",
-                      "font-body text-xs font-bold",
-                      active
-                        ? "bg-white text-primary-600"
-                        : "bg-primary-500 text-white",
-                    )}
-                  >
+                  <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full font-body text-xs font-bold bg-primary-500 text-white">
                     {unreadCount > 99 ? "99+" : unreadCount}
                   </span>
                 )}
