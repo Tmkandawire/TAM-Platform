@@ -5,7 +5,11 @@
 
 import mongoose from "mongoose";
 import ContactMessage from "../models/ContactMessage.js";
-import { buildContactReplyEmail } from "../email/factories/contactEmailFactory.js";
+import {
+  buildContactReplyEmail,
+  buildContactNotificationEmail,
+  buildContactAutoReplyEmail,
+} from "../email/factories/contactEmailFactory.js";
 import emailService from "../email/emailService.js";
 import { NotFoundError, ValidationError } from "../errors/index.js";
 import logger from "../utils/logger.js";
@@ -48,6 +52,33 @@ class ContactService {
       contactId: contact._id,
       subject: contact.subject,
     });
+
+    // ── Email notifications ─────────────────────────────
+    try {
+      // Notify TAM admins
+      const notificationPayload = buildContactNotificationEmail({
+        name: contact.name,
+        email: contact.email,
+        subject: contact.subject,
+        message: contact.message,
+      });
+
+      await emailService.sendTransactional(notificationPayload);
+
+      // Auto reply to sender
+      const autoReplyPayload = buildContactAutoReplyEmail({
+        userEmail: contact.email,
+        name: contact.name,
+        subject: contact.subject,
+      });
+
+      await emailService.sendTransactional(autoReplyPayload);
+    } catch (err) {
+      logger.error("Contact: email notification failed", {
+        contactId: contact._id,
+        error: err.message,
+      });
+    }
 
     return contact;
   }
